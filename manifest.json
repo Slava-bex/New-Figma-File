@@ -1,9 +1,10 @@
 {
-  "name": "New File",
+  "name": "New Figma File",
   "id": "1701535361685476753",
   "api": "1.0.0",
   "main": "code.js",
   "capabilities": [],
+  "permissions": ["currentuser"],
   "enableProposedApi": false,
   "documentAccess": "dynamic-page",
   "editorType": [
@@ -12,7 +13,7 @@
     "slides",
     "buzz"
   ],
-  "ui": "ui.html",
+  "ui": "dist/ui.html",
   "networkAccess": {
     "allowedDomains": [
       "none"

@@ -1,17 +1,648 @@
-<h2>Shape Creator</h2>
-<p>Count: <input id="count" type="number" value="5"></p>
-<button id="create">Create</button>
-<button id="cancel">Cancel</button>
-<script>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- figui3 styles are inlined here at build time (scripts/build-ui.mjs) -->
+  <!-- figui3:css -->
+  <style>
+    :root {
+      /* Scales the whole UI. Keep in sync with UI_SCALE in code.ts. */
+      zoom: 1.15;
+    }
+    body {
+      margin: 0;
+      background: var(--figma-color-bg);
+      color: var(--figma-color-text);
+    }
+    .step {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacer-4);
+      padding: var(--spacer-3) var(--spacer-4) var(--spacer-4);
+    }
+    /* fig-stack/fig-button set their own display, which would override [hidden]. */
+    [hidden] { display: none !important; }
 
-document.getElementById('create').onclick = () => {
-  const textbox = document.getElementById('count');
-  const count = parseInt(textbox.value, 10);
-  parent.postMessage({ pluginMessage: { type: 'create-shapes', count } }, '*')
-}
+    /* Step headings */
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: var(--spacer-1);
+      min-height: var(--spacer-5, 32px);
+    }
+    .step-header h2 {
+      margin: 0;
+      font-size: var(--body-large-fontSize);
+      font-weight: var(--body-large-strong-fontWeight);
+      color: var(--figma-color-text);
+    }
+    /* Large (32px) hit area; the negative margin keeps the chevron aligned. */
+    .step-header fig-button {
+      margin-left: calc(-1 * var(--spacer-2));
+    }
 
-document.getElementById('cancel').onclick = () => {
-  parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-}
+    /* Step 1: file type rows (label left, chevron right) */
+    .type-list fig-button {
+      --fig-button-content-alignment: space-between;
+      color: var(--figma-color-text);
+      font-weight: normal;
+      /* Bleed the hover background out so the label lines up with the heading. */
+      padding-inline: var(--spacer-2) var(--spacer-1);
+      margin-inline: calc(-1 * var(--spacer-2));
+      width: calc(100% + 2 * var(--spacer-2));
+    }
+    .chevron-right { transform: scaleX(-1); }
+    /* Tighter gap between the "File type" heading and the list. */
+    #step-type .type-list { margin-top: calc(-1 * var(--spacer-2)); }
 
-</script>
+    /* Step 2: form fields */
+    /* Section label that toggles a collapsible section (e.g. Short description). */
+    /* figui3 styles every native <button> like a primary button (blue
+       background, brand pressed state); reset all of that here. */
+    button.disclosure,
+    button.disclosure:is(:hover, :active, :focus) {
+      appearance: none;
+      background: none !important;
+      box-shadow: none !important;
+      border: 0;
+      padding: 0;
+      height: auto;
+      font: inherit;
+      font-weight: var(--body-medium-strong-fontWeight);
+      text-align: start;
+      cursor: default;
+      gap: var(--spacer-1);
+      border-radius: var(--radius-small, 2px);
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button.disclosure:focus-visible {
+      outline: var(--figma-focus-outline, 2px solid var(--figma-color-border-selected));
+      outline-offset: 2px;
+    }
+    /* Pressed: just dim the label and chevron a bit. */
+    button.disclosure:active { color: var(--figma-color-text-secondary); }
+    button.disclosure .tag { margin-left: var(--spacer-1); }
+    .disclosure-chevron {
+      color: currentColor;
+      transition: transform var(--motion-fast) var(--motion-ease);
+    }
+    button.disclosure[aria-expanded="false"] .disclosure-chevron { transform: rotate(-90deg); }
+    .section-label {
+      display: flex;
+      align-items: center;
+      gap: var(--spacer-2);
+      font-weight: var(--body-medium-strong-fontWeight);
+      margin: 0;
+    }
+    /* figui3 dims all <label>/<p> by default; labels here use primary text. */
+    .section-label,
+    :is(fig-checkbox, fig-radio, fig-switch) label {
+      color: var(--figma-color-text);
+    }
+    .tag {
+      padding: 0 var(--spacer-1);
+      border-radius: var(--radius-medium);
+      background: var(--figma-color-bg-secondary);
+      color: var(--figma-color-text-secondary);
+      font-weight: normal;
+    }
+    .hint {
+      margin: 0;
+      color: var(--figma-color-text-secondary);
+      font: var(--body-medium-font);
+    }
+    .hint a {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--spacer-half);
+      color: var(--figma-color-text-brand);
+      text-decoration: none;
+    }
+    .hint a:hover { text-decoration: underline; }
+    .indented {
+      padding-left: var(--spacer-4);
+      box-sizing: border-box;
+    }
+
+    /* Validation: message under a field, either an error or a soft limit notice. */
+    :root {
+      /* Fallback only; Figma's theme provides --figma-color-text-danger. */
+      --color-validation: #F05252;
+    }
+    .field-message {
+      margin: 0;
+      font: var(--body-medium-font);
+      color: var(--figma-color-text-danger, var(--color-validation));
+    }
+    /* The field box is drawn by fig-input-text itself (the inner input is transparent). */
+    fig-input-text[aria-invalid="true"] {
+      box-shadow: inset 0 0 0 1px var(--figma-color-border-danger-strong, var(--color-validation));
+    }
+
+    /* ---- Motion ---- */
+    :root {
+      --motion-fast: 120ms;
+      --motion-page: 220ms;
+      --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+    }
+    /* No scrollbar unless the content is taller than the max window height;
+       the script adds .scrollable in that case (see "Window height"). */
+    html { overflow: hidden; }
+    html.scrollable { overflow-y: auto; }
+
+    /* Component states: hover / focus / checked fade instead of snapping.
+       (The switch is excluded: figui3 already animates its knob.) */
+    fig-button,
+    fig-icon,
+    input[type="text"],
+    textarea,
+    input[type="checkbox"]:not(.switch),
+    input[type="radio"],
+    .hint a {
+      transition:
+        background-color var(--motion-fast) ease-out,
+        color var(--motion-fast) ease-out,
+        box-shadow var(--motion-fast) ease-out,
+        outline-color var(--motion-fast) ease-out,
+        transform var(--motion-fast) var(--motion-ease);
+    }
+    /* Chevrons nudge in the direction they point. */
+    .type-list fig-button:hover .chevron-right { transform: scaleX(-1) translateX(-2px); }
+    /* Pressed feedback. */
+    fig-button:active { transform: scale(0.98); }
+
+    /* Page navigation: the step that appears slides in from the side we're
+       moving towards. body[data-nav] is set by the script on navigation. */
+    @keyframes enter-from-right {
+      from { opacity: 0; transform: translateX(24px); }
+    }
+    @keyframes enter-from-left {
+      from { opacity: 0; transform: translateX(-24px); }
+    }
+    body[data-nav="forward"] .step:not([hidden]) {
+      animation: enter-from-right var(--motion-page) var(--motion-ease);
+    }
+    body[data-nav="back"] .step:not([hidden]) {
+      animation: enter-from-left var(--motion-page) var(--motion-ease);
+    }
+
+    /* Collapsible sections (Short description, "Other" product name) animate
+       their height in the script: see setSectionVisible(). */
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Step 1: choose a file type -->
+    <section class="step" id="step-type">
+      <div class="step-header">
+        <h2>File type</h2>
+      </div>
+      <fig-stack direction="vertical" gap="1" class="type-list" full>
+        <fig-button variant="ghost" size="large" data-type="blank">
+          Blank (thumbnail only) <fig-icon name="back" class="chevron-right"></fig-icon>
+        </fig-button>
+        <fig-button variant="ghost" size="large" data-type="project-discovery">
+          Product Design: Project discovery <fig-icon name="back" class="chevron-right"></fig-icon>
+        </fig-button>
+        <fig-button variant="ghost" size="large" data-type="project-hand-off">
+          Product Design: Project hand-off <fig-icon name="back" class="chevron-right"></fig-icon>
+        </fig-button>
+        <fig-button variant="ghost" size="large" data-type="living-feature-file">
+          Product Design: Living feature file <fig-icon name="back" class="chevron-right"></fig-icon>
+        </fig-button>
+      </fig-stack>
+      <p class="hint">
+        Read more about
+        <a id="file-types-link" href="#">
+          Figma File types at Bex
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M7 1.5h3.5V5M10.5 1.5 5.5 6.5M9 7.5v2a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+      </p>
+    </section>
+
+    <!--
+      Step 2: details for the chosen file type. Sections list the file types
+      they belong to in data-types; the script shows/hides them.
+    -->
+    <section class="step" id="step-details" hidden>
+      <div class="step-header">
+        <fig-button id="back" variant="ghost" size="large" icon aria-label="Back to file types">
+          <fig-icon name="back"></fig-icon>
+        </fig-button>
+        <h2 id="details-heading"></h2>
+      </div>
+
+      <!-- Name (label depends on file type) -->
+      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+        <label class="section-label" for="name" id="name-label">Project name</label>
+        <fig-input-text id="name" size="large" placeholder="Identifiable name (1-5 words)" full></fig-input-text>
+        <p class="hint">Short but easily recognizable. Will be used as thumbnail title.</p>
+      </fig-stack>
+
+      <!-- Short description -->
+      <!-- Collapsed by default so it doesn't invite filling in; the label toggles it. -->
+      <fig-stack id="description-section" direction="vertical" gap="2" full data-types="blank">
+        <button type="button" class="section-label disclosure" id="description-toggle"
+                aria-expanded="false" aria-controls="description-body">
+          Short description
+          <fig-icon name="chevron" size="small" class="disclosure-chevron" aria-hidden="true"></fig-icon>
+          <span class="tag">Optional</span>
+        </button>
+        <fig-stack id="description-body" direction="vertical" gap="2" full hidden>
+          <fig-input-text id="description" size="large" placeholder="Short description" aria-label="Short description" full></fig-input-text>
+          <p class="hint">Only if adds value. Keep it short.<br>Will be used as thumbnail description.</p>
+        </fig-stack>
+      </fig-stack>
+
+      <!-- Contributors -->
+      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+        <label class="section-label" for="contributors">Contributor(s)</label>
+        <fig-input-text id="contributors" size="large" placeholder="Name, Name" full></fig-input-text>
+      </fig-stack>
+
+      <!-- GitHub issue -->
+      <fig-stack direction="vertical" gap="2" full data-types="project-discovery project-hand-off">
+        <label class="section-label" for="github-issue">GitHub issue # <span class="tag">Optional</span></label>
+        <fig-input-text id="github-issue" size="large" placeholder="For ex: 12345" full></fig-input-text>
+      </fig-stack>
+
+      <!-- Product -->
+      <fig-stack direction="vertical" gap="2" full data-types="project-discovery project-hand-off living-feature-file">
+        <p class="section-label" id="product-label">Product</p>
+        <fig-stack direction="vertical" gap="1" role="group" aria-labelledby="product-label">
+          <fig-checkbox name="product" value="PMS" label="PMS"></fig-checkbox>
+          <fig-checkbox name="product" value="CMS" label="CMS"></fig-checkbox>
+          <fig-checkbox name="product" value="RMS" label="RMS"></fig-checkbox>
+          <fig-checkbox name="product" value="Payment Portal" label="Payment Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Guest Portal" label="Guest Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Owner Portal" label="Owner Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Media Library" label="Media Library"></fig-checkbox>
+          <fig-checkbox name="product" value="Butler" label="Butler"></fig-checkbox>
+          <fig-checkbox id="product-other" name="product" value="Other" label="Other"></fig-checkbox>
+        </fig-stack>
+        <fig-stack direction="vertical" class="indented" id="product-other-field" full hidden>
+          <fig-input-text id="product-other-name" size="large" placeholder="Product name" aria-label="Other product" full></fig-input-text>
+        </fig-stack>
+      </fig-stack>
+
+      <!-- Data protection -->
+      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+        <p class="section-label">Data protection</p>
+        <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
+      </fig-stack>
+
+      <fig-button id="create" size="large" full>Create file</fig-button>
+    </section>
+  </div>
+
+  <!-- figui3 components are inlined here at build time (scripts/build-ui.mjs) -->
+  <!-- figui3:js -->
+  <script type="module">
+    // TODO: replace with the real "Figma File types at Bex" documentation URL.
+    const FILE_TYPES_URL = 'https://www.figma.com/';
+
+    // Per file type: step 2 heading and the label of the name field.
+    const FILE_TYPES = {
+      'blank': { heading: 'Blank', nameLabel: 'Title' },
+      'project-discovery': { heading: 'Project discovery', nameLabel: 'Project name' },
+      'project-hand-off': { heading: 'Project hand-off', nameLabel: 'Project name' },
+      'living-feature-file': { heading: 'Living feature file', nameLabel: 'Feature name' },
+    };
+
+    const $ = (selector) => document.querySelector(selector);
+    const post = (pluginMessage) => parent.postMessage({ pluginMessage }, '*');
+    const isShown = (el) => !el.closest('[hidden]');
+
+    const stepType = $('#step-type');
+    const stepDetails = $('#step-details');
+    const sections = [...stepDetails.querySelectorAll('[data-types]')];
+    let fileType = null;
+
+    // Step 1 -> step 2: show only the sections that belong to the chosen type.
+    function openDetails(type) {
+      fileType = type;
+      $('#details-heading').textContent = FILE_TYPES[type].heading;
+      $('#name-label').textContent = FILE_TYPES[type].nameLabel;
+      for (const section of sections) {
+        section.hidden = !section.dataset.types.split(' ').includes(type);
+      }
+      // Messages mention the field label, which depends on the file type.
+      for (const id of Object.keys(FIELDS)) refresh(id);
+      document.body.dataset.nav = 'forward';
+      stepType.hidden = true;
+      stepDetails.hidden = false;
+      $('#name').focus();
+    }
+
+    // Step 2 -> step 1. Typed values are kept in case the user comes back.
+    function openTypeList() {
+      const previous = fileType;
+      fileType = null;
+      document.body.dataset.nav = 'back';
+      stepDetails.hidden = true;
+      stepType.hidden = false;
+      stepType.querySelector(`[data-type="${previous}"]`)?.focus();
+    }
+
+    for (const row of stepType.querySelectorAll('[data-type]')) {
+      row.addEventListener('click', () => openDetails(row.dataset.type));
+    }
+    $('#back').addEventListener('click', openTypeList);
+
+    $('#file-types-link').addEventListener('click', (event) => {
+      event.preventDefault();
+      post({ type: 'open-url', url: FILE_TYPES_URL });
+    });
+
+    // ---- Validation & sanitization ----
+    // Constraints (Figma: "Input validation & constraints"):
+    //   Title/name    min 3, max 80     Contributors  max 60
+    //   Description   max 120           Product name  max 30
+    //   GitHub #      max 6 digits; "#" and GitHub URLs are reduced to the number
+
+    // Trim, strip control characters and collapse runs of whitespace.
+    const cleanText = (value) =>
+      String(value ?? '').replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
+
+    // "Ann ,Bob,  Cy" -> "Ann, Bob, Cy"
+    const cleanList = (value) =>
+      cleanText(value).split(',').map((part) => part.trim()).filter(Boolean).join(', ');
+
+    // "#123", "123", "https://github.com/org/repo/issues/123#issuecomment-1" -> "123"
+    function cleanGithubIssue(value) {
+      let text = String(value ?? '').trim();
+      const fromUrl = text.match(/github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/(\d+)/i);
+      if (fromUrl) text = fromUrl[1];
+      return text.replace(/^#+/, '').replace(/\D/g, '').slice(0, 6);
+    }
+
+    const FIELDS = {
+      'name': { min: 3, max: 80, required: true, clean: cleanText },
+      'description': { max: 120, clean: cleanText },
+      'contributors': { max: 60, clean: cleanList },
+      'product-other-name': { max: 30, clean: cleanText },
+      // No native maxlength here: a pasted URL must arrive whole so it can be reduced to the number.
+      'github-issue': { clean: cleanGithubIssue, sanitizeWhileTyping: true },
+    };
+
+    const fieldLabel = (id) =>
+      id === 'name' ? FILE_TYPES[fileType]?.nameLabel ?? 'Name' : $(`label[for="${id}"]`)?.firstChild.textContent.trim() ?? $(`#${id}`).getAttribute('aria-label');
+
+    // Creates (once) the message element shown under a field.
+    function messageFor(input) {
+      let message = document.getElementById(`${input.id}-message`);
+      if (!message) {
+        message = document.createElement('p');
+        message.id = `${input.id}-message`;
+        message.className = 'field-message';
+        message.setAttribute('aria-live', 'polite');
+        message.hidden = true;
+        input.after(message);
+        input.setAttribute('aria-describedby', message.id);
+      }
+      return message;
+    }
+
+    function showMessage(input, text, tone) {
+      const message = messageFor(input);
+      message.textContent = text ?? '';
+      message.dataset.tone = tone ?? '';
+      message.hidden = !text;
+      input.setAttribute('aria-invalid', tone === 'error' ? 'true' : 'false');
+      // The field's regular hint makes way for an error.
+      const hint = message.nextElementSibling;
+      if (hint?.classList.contains('hint')) hint.hidden = tone === 'error';
+    }
+
+    // Returns an error string, or null when the field is valid.
+    function validate(id) {
+      const rule = FIELDS[id];
+      const value = rule.clean($(`#${id}`).value);
+      const label = fieldLabel(id);
+      if (rule.required && !value) return `${label} is required`;
+      if (rule.min && value && value.length < rule.min) return `${label} needs at least ${rule.min} characters`;
+      if (rule.max && value.length > rule.max) return `${label} can be at most ${rule.max} characters`;
+      return null;
+    }
+
+    // Errors only appear after a filled-in field was left (or on Create); then they update live.
+    const touched = new Set();
+    function refresh(id) {
+      const input = $(`#${id}`);
+      const rule = FIELDS[id];
+      const error = touched.has(id) ? validate(id) : null;
+      if (error) return showMessage(input, error, 'error');
+      const length = String(input.value ?? '').length;
+      if (rule.max && length >= rule.max) return showMessage(input, `Maximum ${rule.max} characters`, 'info');
+      showMessage(input, null);
+    }
+
+    for (const [id, rule] of Object.entries(FIELDS)) {
+      const input = $(`#${id}`);
+      const native = input.querySelector('input, textarea');
+      if (rule.max && native) native.maxLength = rule.max;
+
+      input.addEventListener('input', () => {
+        if (rule.sanitizeWhileTyping) {
+          const cleaned = rule.clean(input.value);
+          if (cleaned !== input.value) input.value = cleaned;
+        }
+        refresh(id);
+      });
+      input.addEventListener('focusout', () => {
+        const cleaned = rule.clean(input.value);
+        if (cleaned !== input.value) input.value = cleaned;
+        // Leaving a field empty isn't an error yet; "required" is reported on Create.
+        if (cleaned) touched.add(id);
+        refresh(id);
+      });
+    }
+
+    // Validates the fields visible for the current file type; focuses the first invalid one.
+    function validateVisibleFields() {
+      let firstInvalid = null;
+      for (const id of Object.keys(FIELDS)) {
+        const input = $(`#${id}`);
+        if (!isShown(input)) continue;
+        touched.add(id);
+        refresh(id);
+        if (validate(id) && !firstInvalid) firstInvalid = input;
+      }
+      firstInvalid?.focus();
+      return !firstInvalid;
+    }
+
+    // Short description: collapsed by default, the label toggles it.
+    const descriptionToggle = $('#description-toggle');
+    descriptionToggle.addEventListener('click', () => {
+      const expand = descriptionToggle.getAttribute('aria-expanded') !== 'true';
+      descriptionToggle.setAttribute('aria-expanded', String(expand));
+      setSectionVisible($('#description-body'), expand);
+      // preventScroll: the window is still growing, don't scroll the content meanwhile.
+      if (expand) $('#description').focus({ preventScroll: true });
+    });
+
+    // "Other" product: the name field is only shown while "Other" is checked.
+    const otherCheckbox = $('#product-other');
+    const otherName = $('#product-other-name');
+    otherCheckbox.addEventListener('change', () => {
+      setSectionVisible($('#product-other-field'), otherCheckbox.checked);
+      if (otherCheckbox.checked) otherName.focus({ preventScroll: true });
+    });
+
+    // ---- Window height ----
+    // The plugin window follows the content height, animated on the same curve
+    // as the CSS motion (--motion-ease / --motion-page). Figma can't animate a
+    // window resize itself, so we post intermediate heights every frame.
+    const WINDOW = { min: 120, max: 600 }; // replaced by the plugin's limits on init
+    const RESIZE_DURATION = 220;
+    const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+    // CSS cubic-bezier() timing function: x = time progress, returns eased progress.
+    function cubicBezier(x1, y1, x2, y2) {
+      const at = (a, b, t) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+      return (x) => {
+        let lo = 0, hi = 1, t = x;
+        for (let i = 0; i < 24; i++) {
+          const current = at(x1, x2, t);
+          if (Math.abs(current - x) < 1e-4) break;
+          if (current < x) lo = t; else hi = t;
+          t = (lo + hi) / 2;
+        }
+        return at(y1, y2, t);
+      };
+    }
+    const ease = cubicBezier(0.2, 0, 0, 1);
+
+    const app = $('#app');
+    const root = document.documentElement;
+    let windowHeight = null;
+    let resizeFrame = 0;
+
+    function setWindowHeight(height) {
+      if (height === windowHeight) return;
+      windowHeight = height;
+      post({ type: 'resize', height });
+    }
+
+    function fitWindow() {
+      const content = Math.ceil(app.getBoundingClientRect().height);
+      const target = Math.min(WINDOW.max, Math.max(WINDOW.min, content));
+      const settle = () => root.classList.toggle('scrollable', content > target);
+      cancelAnimationFrame(resizeFrame);
+
+      // While a section animates its height, the content is already easing:
+      // the window just follows it frame by frame. The scrollbar only stays if
+      // the content is taller than the window can get anyway (avoids width flicker).
+      if (sectionAnimations.size) {
+        root.classList.toggle('scrollable', content > WINDOW.max);
+        return setWindowHeight(target);
+      }
+
+      if (windowHeight === null || windowHeight === target || reduceMotion.matches) {
+        setWindowHeight(target);
+        return settle();
+      }
+
+      // No scrollbar while the window catches up with the content.
+      root.classList.remove('scrollable');
+      const from = windowHeight;
+      const start = performance.now();
+      const step = (now) => {
+        const progress = Math.min(1, (now - start) / RESIZE_DURATION);
+        setWindowHeight(Math.round(from + (target - from) * ease(progress)));
+        if (progress < 1) resizeFrame = requestAnimationFrame(step);
+        else settle();
+      };
+      resizeFrame = requestAnimationFrame(step);
+    }
+    new ResizeObserver(fitWindow).observe(app);
+
+    // ---- Collapsible sections ----
+    // Shows/hides a section by animating its height (and the stack gap above it),
+    // so the content below slides instead of jumping. Interruptible: a new toggle
+    // starts from wherever the running animation currently is.
+    const sectionAnimations = new Map(); // element -> running Animation
+
+    function setSectionVisible(el, show) {
+      const running = sectionAnimations.get(el);
+      if (!running && el.hidden === !show) return;
+
+      const gap = getComputedStyle(el.parentElement).rowGap;
+      const closed = { height: '0px', marginTop: `calc(-1 * ${gap})`, opacity: 0 };
+      // Start from the current on-screen state (mid-animation if interrupted).
+      const current = getComputedStyle(el);
+      const from = el.hidden
+        ? closed
+        : { height: current.height, marginTop: current.marginTop, opacity: Number(current.opacity) };
+      running?.cancel();
+
+      el.hidden = false;
+      if (reduceMotion.matches) {
+        el.hidden = !show;
+        return;
+      }
+      const open = { height: getComputedStyle(el).height, marginTop: '0px', opacity: 1 };
+
+      el.style.overflow = 'clip';
+      const animation = el.animate([from, show ? open : closed], {
+        duration: RESIZE_DURATION,
+        easing: 'cubic-bezier(0.2, 0, 0, 1)', // --motion-ease
+      });
+      sectionAnimations.set(el, animation);
+      animation.onfinish = () => {
+        if (sectionAnimations.get(el) !== animation) return;
+        sectionAnimations.delete(el);
+        el.style.overflow = '';
+        el.hidden = !show;
+        fitWindow(); // settle the window height and scrollbar
+      };
+    }
+
+    $('#create').addEventListener('click', () => {
+      if (!fileType || !validateVisibleFields()) return;
+
+      // Only send the fields that are visible for this file type, sanitized.
+      const value = (id) => FIELDS[id].clean($(`#${id}`).value);
+      const data = { fileType, name: value('name') };
+      // Sent whenever the section applies, even if collapsed after typing.
+      if (isShown($('#description-section'))) data.description = value('description');
+      if (isShown($('#contributors'))) data.contributors = value('contributors');
+      if (isShown($('#github-issue'))) data.githubIssue = value('github-issue');
+      if (isShown(otherCheckbox)) {
+        data.products = [...document.querySelectorAll('fig-checkbox[name="product"]')]
+          .filter((checkbox) => checkbox.checked)
+          .map((checkbox) =>
+            checkbox === otherCheckbox ? value('product-other-name') || 'Other' : checkbox.value,
+          );
+      }
+      data.externallyAccessible = $('#external-access').checked;
+
+      post({ type: 'create-file', data });
+    });
+
+    // Initial values from the plugin (e.g. the remembered contributor name).
+    window.addEventListener('message', (event) => {
+      const msg = event.data?.pluginMessage;
+      if (msg?.type !== 'init') return;
+      if (msg.window) {
+        Object.assign(WINDOW, msg.window);
+        fitWindow();
+      }
+      const contributors = $('#contributors');
+      if (msg.contributors && !contributors.value) contributors.value = msg.contributors;
+    });
+    post({ type: 'ready' });
+  </script>
+</body>
+</html>
