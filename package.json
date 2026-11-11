@@ -1,15 +1,16 @@
 {
   "name": "new-figma-file",
-  "version": "1.0.0",
-  "description": "Your Figma Plugin",
+  "version": "2.0.0",
+  "description": "Sets up page structure and a thumbnail in a new Figma file",
   "main": "code.js",
   "scripts": {
     "build": "npm run build:ui && npm run build:code",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "watch": "node scripts/build-ui.mjs --watch & tsc -p tsconfig.json --watch",
+    "watch": "node scripts/build-ui.mjs --watch & node scripts/build-code.mjs --watch",
     "build:ui": "node scripts/build-ui.mjs",
-    "build:code": "tsc -p tsconfig.json"
+    "build:code": "tsc -p tsconfig.json && node scripts/build-code.mjs",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "author": "",
   "license": "",

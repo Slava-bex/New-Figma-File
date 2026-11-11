@@ -1,0 +1,9 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "order": 4,
+  "label": "Product Design: Living feature file",
+  "heading": "Living feature file",
+  "nameLabel": "Feature name",
+  "fields": ["contributors", "products", "externalAccess"],
+  "pages": ["thumbnail"]
+}

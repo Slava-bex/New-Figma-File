@@ -1,105 +1,41 @@
-// This file holds the main code for plugins. Code in this file has access to
-// the *figma document* via the figma global object.
-// You can access browser APIs in the <script> tag inside "ui.html" which has a
-// full browser environment (See https://www.figma.com/plugin-docs/how-plugins-run).
+// Plugin entry point: opens the UI and handles its messages.
+// What "Create file" builds is defined per template in templates/ (see templates/README.md).
 
-type FileType = 'blank' | 'project-discovery' | 'project-hand-off' | 'living-feature-file';
-
-// Fields are only present when the UI shows them for the chosen file type:
-//   blank:               name (Title), description, contributors
-//   project-discovery:   name (Project name), contributors, githubIssue, products
-//   project-hand-off:    name (Project name), contributors, githubIssue, products
-//   living-feature-file: name (Feature name), contributors, products
-interface NewFileData {
-  fileType: FileType;
-  name: string;
-  description?: string;
-  contributors?: string;
-  githubIssue?: string;
-  products?: string[];
-  externallyAccessible: boolean;
-}
-
-// Same constraints as the UI (Figma: "Input validation & constraints"). The UI
-// already enforces them; this is a safety net so the plugin never acts on bad data.
-const LIMITS = { name: { min: 3, max: 80 }, description: 120, contributors: 60, product: 30, githubIssue: 6 };
-const FILE_TYPES: FileType[] = ['blank', 'project-discovery', 'project-hand-off', 'living-feature-file'];
-
-const cleanText = (value: unknown, max: number) =>
-  String(value ?? '')
-    .replace(/\p{Cc}/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
-
-function cleanGithubIssue(value: unknown) {
-  let text = String(value ?? '').trim();
-  const fromUrl = text.match(/github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/(\d+)/i);
-  if (fromUrl) text = fromUrl[1];
-  return text.replace(/^#+/, '').replace(/\D/g, '').slice(0, LIMITS.githubIssue);
-}
-
-// Returns sanitized data, or an error message if it can't be used.
-function sanitize(data: NewFileData): NewFileData | string {
-  if (!FILE_TYPES.includes(data.fileType)) return 'Unknown file type';
-  const name = cleanText(data.name, LIMITS.name.max);
-  if (name.length < LIMITS.name.min) return `Name needs at least ${LIMITS.name.min} characters`;
-
-  const clean: NewFileData = {
-    fileType: data.fileType,
-    name,
-    externallyAccessible: data.externallyAccessible === true,
-  };
-  if (data.description !== undefined) clean.description = cleanText(data.description, LIMITS.description);
-  if (data.contributors !== undefined) clean.contributors = cleanText(data.contributors, LIMITS.contributors);
-  if (data.githubIssue !== undefined) clean.githubIssue = cleanGithubIssue(data.githubIssue);
-  if (Array.isArray(data.products)) {
-    clean.products = data.products.map((product) => cleanText(product, LIMITS.product)).filter(Boolean);
-  }
-  return clean;
-}
-
-// ---- Remembered contributor name ----
-// When the Contributors list includes the current user's own name, or the
-// first part of it ("Slava" for "Slava Bronevitskiy"), that entry is saved
-// on Create and pre-filled on the next launch. Stored per user via clientStorage.
-const CONTRIBUTOR_NAME_KEY = 'contributorName';
-
-function findOwnName(contributors: string | undefined): string | null {
-  const fullName = figma.currentUser?.name?.trim().toLowerCase();
-  if (!fullName || !contributors) return null;
-  for (const entry of contributors.split(',').map((part) => part.trim()).filter(Boolean)) {
-    const candidate = entry.toLowerCase();
-    // Must match the start of the full name on a word boundary ("Sla" doesn't count).
-    if (fullName === candidate || fullName.startsWith(`${candidate} `)) return entry;
-  }
-  return null;
-}
-
-async function loadContributorName(): Promise<string> {
-  try {
-    const stored = await figma.clientStorage.getAsync(CONTRIBUTOR_NAME_KEY);
-    return typeof stored === 'string' ? cleanText(stored, LIMITS.contributors) : '';
-  } catch {
-    return '';
-  }
-}
-
-async function saveContributorName(contributors: string | undefined) {
-  const ownName = findOwnName(contributors);
-  if (!ownName) return; // Keep whatever was remembered before.
-  try {
-    await figma.clientStorage.setAsync(CONTRIBUTOR_NAME_KEY, ownName);
-  } catch (error) {
-    console.warn('Could not save contributor name', error);
-  }
-}
+import { captureFile } from './src/capture';
+import {
+  clearContributorName,
+  contributorMemoryDebugInfo,
+  loadContributorName,
+  saveContributorName,
+} from './src/contributor-memory';
+import { createFile } from './src/create';
+import { sanitize } from './src/sanitize';
+import { checkTemplates, templateSummaries } from './src/templates';
+import type { NewFileData } from './src/types';
+import { DISPLAY_VERSION } from './src/version';
 
 type UIMessage =
   | { type: 'ready' }
   | { type: 'create-file'; data: NewFileData }
   | { type: 'open-url'; url: string }
-  | { type: 'resize'; height: number };
+  | { type: 'resize'; height: number }
+  | { type: 'debug-clear-contributor' }
+  | { type: 'capture-file' };
+
+// Shows a "Capture this file as JSON" tool on the File type step: turns the
+// open file into a template file for templates/ (see templates/README.md).
+// For building templates only; turn off before publishing.
+const CAPTURE = true;
+
+// Shows a debug panel at the bottom of the UI with the remembered contributor
+// name: what's stored, what was pre-filled, and what happened on Create.
+// Turn off before publishing.
+const DEBUG = false;
+
+async function sendDebug(extra: Record<string, unknown> = {}) {
+  if (!DEBUG) return;
+  figma.ui.postMessage({ type: 'debug', info: { ...(await contributorMemoryDebugInfo()), ...extra } });
+}
 
 // Matches the CSS `zoom` on :root in ui.html, so the window grows with the UI.
 const UI_SCALE = 1.15;
@@ -109,6 +45,13 @@ const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 
 if (figma.editorType === 'figma') {
+  // Catch mistakes in templates/*.json as soon as the plugin opens.
+  const templateErrors = checkTemplates();
+  if (templateErrors.length) {
+    console.error('templates/ has problems:\n' + templateErrors.join('\n'));
+    figma.notify(`templates/${templateErrors[0]}`, { error: true, timeout: 10000 });
+  }
+
   figma.showUI(__html__, {
     themeColors: true,
     title: 'New file',
@@ -119,12 +62,36 @@ if (figma.editorType === 'figma') {
   figma.ui.onmessage = async (msg: UIMessage) => {
     // The UI asks for its initial values once its script has loaded.
     if (msg.type === 'ready') {
+      const contributors = await loadContributorName();
       figma.ui.postMessage({
         type: 'init',
-        contributors: await loadContributorName(),
+        contributors,
+        // The File type list and each template's heading, name label and fields.
+        templates: templateSummaries(),
+        version: DISPLAY_VERSION, // shown next to the File type heading
+        features: { capture: CAPTURE },
         // The UI animates the window height within these bounds.
         window: { min: MIN_HEIGHT, max: MAX_HEIGHT },
       });
+      await sendDebug({ prefill: contributors });
+      return;
+    }
+
+    if (msg.type === 'capture-file' && CAPTURE) {
+      try {
+        const result = await captureFile();
+        console.log(`Captured file as JSON. Warnings (${result.warnings.length}):\n${result.warnings.join('\n')}`);
+        figma.ui.postMessage({ type: 'capture-result', result });
+      } catch (error) {
+        console.error(error);
+        figma.ui.postMessage({ type: 'capture-result', error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
+    if (msg.type === 'debug-clear-contributor') {
+      await clearContributorName();
+      await sendDebug({ prefill: '', lastSave: 'Cleared' });
       return;
     }
 
@@ -140,18 +107,26 @@ if (figma.editorType === 'figma') {
     }
 
     if (msg.type === 'create-file') {
+      const fail = (message: string) => {
+        figma.notify(message, { error: true });
+        figma.ui.postMessage({ type: 'create-failed' });
+      };
+
       const data = sanitize(msg.data);
-      if (typeof data === 'string') {
-        figma.notify(data, { error: true });
-        return;
+      if (typeof data === 'string') return fail(data);
+
+      // Saved on Create even if building the file fails afterwards.
+      const saveResult = await saveContributorName(data.contributors);
+      await sendDebug({ lastSave: saveResult });
+
+      try {
+        await createFile(data);
+      } catch (error) {
+        console.error(error);
+        return fail(error instanceof Error ? error.message : String(error));
       }
 
-      // Must finish before closePlugin(), which would cancel it.
-      await saveContributorName(data.contributors);
-
-      // TODO: build the file from data (thumbnail, pages, etc.).
-      console.log('Create file', data);
-      figma.closePlugin(`Created "${data.name}"`);
+      figma.closePlugin(DEBUG ? `Created "${data.name}" · ${saveResult}` : `Created "${data.name}"`);
     }
   };
 }
