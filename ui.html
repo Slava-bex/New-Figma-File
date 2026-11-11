@@ -112,6 +112,14 @@
       color: var(--figma-color-text-secondary);
       font: var(--body-medium-font);
     }
+    /* Plugin version, right side of the File type heading row: present but quiet. */
+    .version {
+      margin-left: auto;
+      color: var(--figma-color-text-tertiary, var(--figma-color-text-disabled));
+      opacity: 0.25;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
     .hint a {
       display: inline-flex;
       align-items: center;
@@ -196,6 +204,75 @@
         transition: none !important;
       }
     }
+
+    /* Debug panel (DEBUG in code.ts) */
+    #debug {
+      margin: 0 var(--spacer-4) var(--spacer-4);
+      padding: var(--spacer-2);
+      border: 1px dashed var(--figma-color-border);
+      border-radius: var(--radius-medium, 6px);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      color: var(--figma-color-text);
+    }
+    #debug .debug-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--spacer-1);
+    }
+    #debug dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 2px var(--spacer-2);
+      margin: 0;
+    }
+    #debug dt { color: var(--figma-color-text-secondary); }
+    #debug dd { margin: 0; overflow-wrap: anywhere; }
+
+    /* Capture tool (CAPTURE in code.ts) */
+    .dev-panel {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacer-1);
+      padding: var(--spacer-2);
+      border: 1px dashed var(--figma-color-border);
+      border-radius: var(--radius-medium, 6px);
+      color: var(--figma-color-text);
+    }
+    .dev-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacer-2);
+    }
+    .dev-panel-note {
+      margin: 0;
+      color: var(--figma-color-text-secondary);
+    }
+    #capture-output {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacer-1);
+    }
+    #capture-json {
+      box-sizing: border-box;
+      width: 100%;
+      height: 140px;
+      resize: vertical;
+      padding: var(--spacer-1);
+      border: 1px solid var(--figma-color-border);
+      border-radius: var(--radius-medium, 6px);
+      background: var(--figma-color-bg-secondary);
+      color: var(--figma-color-text);
+      font: 10px/1.4 ui-monospace, Menlo, monospace;
+    }
+    #capture-warnings {
+      margin: 0;
+      padding-left: var(--spacer-3);
+      color: var(--figma-color-text-warning, var(--figma-color-text-secondary));
+    }
+    #capture-warnings:empty { display: none; }
   </style>
 </head>
 <body>
@@ -204,21 +281,11 @@
     <section class="step" id="step-type">
       <div class="step-header">
         <h2>File type</h2>
+        <!-- Filled from package.json "version" (sent with the init message). -->
+        <span class="version" id="version" hidden></span>
       </div>
-      <fig-stack direction="vertical" gap="1" class="type-list" full>
-        <fig-button variant="ghost" size="large" data-type="blank">
-          Blank (thumbnail only) <fig-icon name="back" class="chevron-right"></fig-icon>
-        </fig-button>
-        <fig-button variant="ghost" size="large" data-type="project-discovery">
-          Product Design: Project discovery <fig-icon name="back" class="chevron-right"></fig-icon>
-        </fig-button>
-        <fig-button variant="ghost" size="large" data-type="project-hand-off">
-          Product Design: Project hand-off <fig-icon name="back" class="chevron-right"></fig-icon>
-        </fig-button>
-        <fig-button variant="ghost" size="large" data-type="living-feature-file">
-          Product Design: Living feature file <fig-icon name="back" class="chevron-right"></fig-icon>
-        </fig-button>
-      </fig-stack>
+      <!-- One row per template in templates/ (filled from the init message). -->
+      <fig-stack direction="vertical" gap="1" class="type-list" id="type-list" full></fig-stack>
       <p class="hint">
         Read more about
         <a id="file-types-link" href="#">
@@ -228,11 +295,30 @@
           </svg>
         </a>
       </p>
+
+      <!-- Template building tool, only shown when CAPTURE is on in code.ts. -->
+      <aside id="capture" class="dev-panel" hidden>
+        <div class="dev-panel-header">
+          <strong>Capture this file as JSON</strong>
+          <fig-button id="capture-run" variant="secondary" size="small">Capture</fig-button>
+        </div>
+        <p class="dev-panel-note" id="capture-status">
+          Turns this file's pages into a template file for the plugin's templates/ folder.
+        </p>
+        <div id="capture-output" hidden>
+          <textarea id="capture-json" readonly spellcheck="false"></textarea>
+          <div class="dev-panel-header">
+            <span class="dev-panel-note" id="capture-save-as"></span>
+            <fig-button id="capture-copy" variant="ghost" size="small">Copy</fig-button>
+          </div>
+          <ul id="capture-warnings"></ul>
+        </div>
+      </aside>
     </section>
 
     <!--
-      Step 2: details for the chosen file type. Sections list the file types
-      they belong to in data-types; the script shows/hides them.
+      Step 2: details for the chosen template. Each optional section has a
+      data-field; it's shown when the template lists that field in "fields".
     -->
     <section class="step" id="step-details" hidden>
       <div class="step-header">
@@ -242,8 +328,8 @@
         <h2 id="details-heading"></h2>
       </div>
 
-      <!-- Name (label depends on file type) -->
-      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+      <!-- Name (always shown; label depends on the template) -->
+      <fig-stack direction="vertical" gap="2" full>
         <label class="section-label" for="name" id="name-label">Project name</label>
         <fig-input-text id="name" size="large" placeholder="Identifiable name (1-5 words)" full></fig-input-text>
         <p class="hint">Short but easily recognizable. Will be used as thumbnail title.</p>
@@ -251,7 +337,7 @@
 
       <!-- Short description -->
       <!-- Collapsed by default so it doesn't invite filling in; the label toggles it. -->
-      <fig-stack id="description-section" direction="vertical" gap="2" full data-types="blank">
+      <fig-stack id="description-section" direction="vertical" gap="2" full data-field="description">
         <button type="button" class="section-label disclosure" id="description-toggle"
                 aria-expanded="false" aria-controls="description-body">
           Short description
@@ -265,19 +351,19 @@
       </fig-stack>
 
       <!-- Contributors -->
-      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+      <fig-stack direction="vertical" gap="2" full data-field="contributors">
         <label class="section-label" for="contributors">Contributor(s)</label>
         <fig-input-text id="contributors" size="large" placeholder="Name, Name" full></fig-input-text>
       </fig-stack>
 
-      <!-- GitHub issue -->
-      <fig-stack direction="vertical" gap="2" full data-types="project-discovery project-hand-off">
-        <label class="section-label" for="github-issue">GitHub issue # <span class="tag">Optional</span></label>
-        <fig-input-text id="github-issue" size="large" placeholder="For ex: 12345" full></fig-input-text>
+      <!-- GitHub issue URL -->
+      <fig-stack direction="vertical" gap="2" full data-field="githubIssueUrl">
+        <label class="section-label" for="github-issue-url">GitHub issue URL <span class="tag">Optional</span></label>
+        <fig-input-text id="github-issue-url" size="large" placeholder="https://github.com/bookingexperts/monorepo/issues/12345" full></fig-input-text>
       </fig-stack>
 
       <!-- Product -->
-      <fig-stack direction="vertical" gap="2" full data-types="project-discovery project-hand-off living-feature-file">
+      <fig-stack direction="vertical" gap="2" full data-field="products">
         <p class="section-label" id="product-label">Product</p>
         <fig-stack direction="vertical" gap="1" role="group" aria-labelledby="product-label">
           <fig-checkbox name="product" value="PMS" label="PMS"></fig-checkbox>
@@ -296,13 +382,22 @@
       </fig-stack>
 
       <!-- Data protection -->
-      <fig-stack direction="vertical" gap="2" full data-types="blank project-discovery project-hand-off living-feature-file">
+      <fig-stack direction="vertical" gap="2" full data-field="externalAccess">
         <p class="section-label">Data protection</p>
         <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
       </fig-stack>
 
       <fig-button id="create" size="large" full>Create file</fig-button>
     </section>
+
+    <!-- Only shown when DEBUG is on in code.ts. -->
+    <aside id="debug" hidden>
+      <div class="debug-header">
+        <strong>Debug · remembered contributor</strong>
+        <fig-button id="debug-clear" variant="ghost" size="small">Clear stored</fig-button>
+      </div>
+      <dl id="debug-info"></dl>
+    </aside>
   </div>
 
   <!-- figui3 components are inlined here at build time (scripts/build-ui.mjs) -->
@@ -311,13 +406,9 @@
     // TODO: replace with the real "Figma File types at Bex" documentation URL.
     const FILE_TYPES_URL = 'https://www.figma.com/';
 
-    // Per file type: step 2 heading and the label of the name field.
-    const FILE_TYPES = {
-      'blank': { heading: 'Blank', nameLabel: 'Title' },
-      'project-discovery': { heading: 'Project discovery', nameLabel: 'Project name' },
-      'project-hand-off': { heading: 'Project hand-off', nameLabel: 'Project name' },
-      'living-feature-file': { heading: 'Living feature file', nameLabel: 'Feature name' },
-    };
+    // Templates from templates/*.json, by id: { label, heading, nameLabel, fields }.
+    // Sent by the plugin with the init message.
+    const FILE_TYPES = {};
 
     const $ = (selector) => document.querySelector(selector);
     const post = (pluginMessage) => parent.postMessage({ pluginMessage }, '*');
@@ -325,16 +416,35 @@
 
     const stepType = $('#step-type');
     const stepDetails = $('#step-details');
-    const sections = [...stepDetails.querySelectorAll('[data-types]')];
+    const sections = [...stepDetails.querySelectorAll('[data-field]')];
     let fileType = null;
 
-    // Step 1 -> step 2: show only the sections that belong to the chosen type.
+    // One row in the File type list per template.
+    function showTemplates(templates) {
+      for (const template of templates) FILE_TYPES[template.id] = template;
+      $('#type-list').replaceChildren(
+        ...templates.map((template) => {
+          const row = document.createElement('fig-button');
+          row.setAttribute('variant', 'ghost');
+          row.setAttribute('size', 'large');
+          row.dataset.type = template.id;
+          const icon = document.createElement('fig-icon');
+          icon.setAttribute('name', 'back');
+          icon.className = 'chevron-right';
+          row.append(template.label, ' ', icon);
+          row.addEventListener('click', () => openDetails(template.id));
+          return row;
+        }),
+      );
+    }
+
+    // Step 1 -> step 2: show only the sections the chosen template lists in "fields".
     function openDetails(type) {
       fileType = type;
       $('#details-heading').textContent = FILE_TYPES[type].heading;
       $('#name-label').textContent = FILE_TYPES[type].nameLabel;
       for (const section of sections) {
-        section.hidden = !section.dataset.types.split(' ').includes(type);
+        section.hidden = !FILE_TYPES[type].fields.includes(section.dataset.field);
       }
       // Messages mention the field label, which depends on the file type.
       for (const id of Object.keys(FIELDS)) refresh(id);
@@ -354,9 +464,6 @@
       stepType.querySelector(`[data-type="${previous}"]`)?.focus();
     }
 
-    for (const row of stepType.querySelectorAll('[data-type]')) {
-      row.addEventListener('click', () => openDetails(row.dataset.type));
-    }
     $('#back').addEventListener('click', openTypeList);
 
     $('#file-types-link').addEventListener('click', (event) => {
@@ -368,7 +475,7 @@
     // Constraints (Figma: "Input validation & constraints"):
     //   Title/name    min 3, max 80     Contributors  max 60
     //   Description   max 120           Product name  max 30
-    //   GitHub #      max 6 digits; "#" and GitHub URLs are reduced to the number
+    //   GitHub issue URL  optional; must be https://github.com/<owner>/<repo>/issues/<number>
 
     // Trim, strip control characters and collapse runs of whitespace.
     const cleanText = (value) =>
@@ -378,12 +485,18 @@
     const cleanList = (value) =>
       cleanText(value).split(',').map((part) => part.trim()).filter(Boolean).join(', ');
 
-    // "#123", "123", "https://github.com/org/repo/issues/123#issuecomment-1" -> "123"
-    function cleanGithubIssue(value) {
-      let text = String(value ?? '').trim();
-      const fromUrl = text.match(/github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/(\d+)/i);
-      if (fromUrl) text = fromUrl[1];
-      return text.replace(/^#+/, '').replace(/\D/g, '').slice(0, 6);
+    // Normalizes a GitHub issue link to its canonical form:
+    //   "github.com/org/repo/issues/123", "https://www.github.com/org/repo/issues/123/",
+    //   "https://github.com/org/repo/issues/123?x=1#issuecomment-9"
+    //     -> "https://github.com/org/repo/issues/123"
+    // Anything unrecognizable is returned as typed (trimmed) for validation to flag.
+    const GITHUB_ISSUE_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+$/;
+    function cleanGithubIssueUrl(value) {
+      const text = String(value ?? '').trim();
+      const match = text
+        .replace(/\s+/g, '')
+        .match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/(\d+)(?:[/?#].*)?$/i);
+      return match ? `https://github.com/${match[1]}/${match[2]}/issues/${match[3]}` : text;
     }
 
     const FIELDS = {
@@ -391,8 +504,12 @@
       'description': { max: 120, clean: cleanText },
       'contributors': { max: 60, clean: cleanList },
       'product-other-name': { max: 30, clean: cleanText },
-      // No native maxlength here: a pasted URL must arrive whole so it can be reduced to the number.
-      'github-issue': { clean: cleanGithubIssue, sanitizeWhileTyping: true },
+      // No native maxlength: a pasted link must arrive whole (query, #comment…) to be normalized.
+      'github-issue-url': {
+        clean: cleanGithubIssueUrl,
+        check: (value) =>
+          GITHUB_ISSUE_URL.test(value) ? null : 'Use a GitHub issue link, like github.com/org/repo/issues/12345',
+      },
     };
 
     const fieldLabel = (id) =>
@@ -432,6 +549,7 @@
       if (rule.required && !value) return `${label} is required`;
       if (rule.min && value && value.length < rule.min) return `${label} needs at least ${rule.min} characters`;
       if (rule.max && value.length > rule.max) return `${label} can be at most ${rule.max} characters`;
+      if (rule.check && value) return rule.check(value);
       return null;
     }
 
@@ -453,11 +571,15 @@
       if (rule.max && native) native.maxLength = rule.max;
 
       input.addEventListener('input', () => {
-        if (rule.sanitizeWhileTyping) {
+        refresh(id);
+      });
+      // Normalize pasted text right away (e.g. a full GitHub link with #comment anchor).
+      input.addEventListener('paste', () => {
+        setTimeout(() => {
           const cleaned = rule.clean(input.value);
           if (cleaned !== input.value) input.value = cleaned;
-        }
-        refresh(id);
+          refresh(id);
+        });
       });
       input.addEventListener('focusout', () => {
         const cleaned = rule.clean(input.value);
@@ -487,17 +609,14 @@
     descriptionToggle.addEventListener('click', () => {
       const expand = descriptionToggle.getAttribute('aria-expanded') !== 'true';
       descriptionToggle.setAttribute('aria-expanded', String(expand));
-      setSectionVisible($('#description-body'), expand);
-      // preventScroll: the window is still growing, don't scroll the content meanwhile.
-      if (expand) $('#description').focus({ preventScroll: true });
+      setSectionVisible($('#description-body'), expand, $('#description'));
     });
 
     // "Other" product: the name field is only shown while "Other" is checked.
     const otherCheckbox = $('#product-other');
     const otherName = $('#product-other-name');
     otherCheckbox.addEventListener('change', () => {
-      setSectionVisible($('#product-other-field'), otherCheckbox.checked);
-      if (otherCheckbox.checked) otherName.focus({ preventScroll: true });
+      setSectionVisible($('#product-other-field'), otherCheckbox.checked, otherName);
     });
 
     // ---- Window height ----
@@ -572,9 +691,13 @@
     // Shows/hides a section by animating its height (and the stack gap above it),
     // so the content below slides instead of jumping. Interruptible: a new toggle
     // starts from wherever the running animation currently is.
+    // `focusTarget` is focused once fully expanded, never mid-animation: the
+    // section clips its overflow while animating, which would cut off the focus ring.
     const sectionAnimations = new Map(); // element -> running Animation
 
-    function setSectionVisible(el, show) {
+    function setSectionVisible(el, show, focusTarget) {
+      // preventScroll: the window may still be catching up with the content.
+      const focusIfShown = () => show && focusTarget?.focus({ preventScroll: true });
       const running = sectionAnimations.get(el);
       if (!running && el.hidden === !show) return;
 
@@ -586,11 +709,13 @@
         ? closed
         : { height: current.height, marginTop: current.marginTop, opacity: Number(current.opacity) };
       running?.cancel();
+      // Collapsing: don't keep a (clipped) focus ring inside while it animates out.
+      if (!show && el.contains(document.activeElement)) document.activeElement.blur();
 
       el.hidden = false;
       if (reduceMotion.matches) {
         el.hidden = !show;
-        return;
+        return focusIfShown();
       }
       const open = { height: getComputedStyle(el).height, marginTop: '0px', opacity: 1 };
 
@@ -606,10 +731,20 @@
         el.style.overflow = '';
         el.hidden = !show;
         fitWindow(); // settle the window height and scrollbar
+        focusIfShown();
       };
     }
 
-    $('#create').addEventListener('click', () => {
+    // Busy while the plugin builds the file (importing the template can take a moment).
+    const createButton = $('#create');
+    const createLabel = createButton.textContent;
+    function setCreating(creating) {
+      createButton.toggleAttribute('disabled', creating);
+      createButton.textContent = creating ? 'Creating…' : createLabel;
+    }
+
+    createButton.addEventListener('click', () => {
+      if (createButton.hasAttribute('disabled')) return;
       if (!fileType || !validateVisibleFields()) return;
 
       // Only send the fields that are visible for this file type, sanitized.
@@ -618,7 +753,7 @@
       // Sent whenever the section applies, even if collapsed after typing.
       if (isShown($('#description-section'))) data.description = value('description');
       if (isShown($('#contributors'))) data.contributors = value('contributors');
-      if (isShown($('#github-issue'))) data.githubIssue = value('github-issue');
+      if (isShown($('#github-issue-url'))) data.githubIssueUrl = value('github-issue-url');
       if (isShown(otherCheckbox)) {
         data.products = [...document.querySelectorAll('fig-checkbox[name="product"]')]
           .filter((checkbox) => checkbox.checked)
@@ -626,18 +761,97 @@
             checkbox === otherCheckbox ? value('product-other-name') || 'Other' : checkbox.value,
           );
       }
-      data.externallyAccessible = $('#external-access').checked;
+      data.externallyAccessible = isShown($('#external-access')) && $('#external-access').checked;
 
+      setCreating(true);
       post({ type: 'create-file', data });
     });
 
-    // Initial values from the plugin (e.g. the remembered contributor name).
+    // Debug panel: what the plugin stores and pre-fills for Contributors.
+    const debugState = {};
+    function showDebug(info) {
+      Object.assign(debugState, info);
+      const show = (value) => (value === null || value === undefined ? '—' : JSON.stringify(value));
+      const rows = [
+        ['Figma user', show(debugState.user)],
+        ['Stored', show(debugState.stored)],
+        ['Pre-filled', show(debugState.prefill)],
+        ['Last Create', debugState.lastSave ?? '—'],
+      ];
+      const list = $('#debug-info');
+      list.replaceChildren(
+        ...rows.flatMap(([label, value]) => {
+          const dt = document.createElement('dt');
+          const dd = document.createElement('dd');
+          dt.textContent = label;
+          dd.textContent = value;
+          return [dt, dd];
+        }),
+      );
+      $('#debug').hidden = false;
+    }
+    $('#debug-clear').addEventListener('click', () => post({ type: 'debug-clear-contributor' }));
+
+    // Capture tool: asks the plugin for the open file as a template file.
+    const captureRun = $('#capture-run');
+    captureRun.addEventListener('click', () => {
+      if (captureRun.hasAttribute('disabled')) return;
+      captureRun.setAttribute('disabled', '');
+      $('#capture-status').textContent = 'Reading all pages…';
+      post({ type: 'capture-file' });
+    });
+    function showCapture({ result, error }) {
+      captureRun.removeAttribute('disabled');
+      if (error) {
+        $('#capture-status').textContent = `Couldn't capture: ${error}`;
+        return;
+      }
+      const issues = result.warnings.length;
+      $('#capture-status').textContent =
+        `${result.pages} page${result.pages === 1 ? '' : 's'}, ${result.items} item${result.items === 1 ? '' : 's'}` +
+        (issues ? `, ${issues} warning${issues === 1 ? '' : 's'} below.` : '.');
+      $('#capture-json').value = result.json;
+      $('#capture-save-as').textContent = `Save as templates/${result.fileName}`;
+      // Big files can produce thousands of warnings; the full list is in the console.
+      const MAX_WARNINGS = 30;
+      const shown = result.warnings.slice(0, MAX_WARNINGS);
+      if (issues > MAX_WARNINGS) shown.push(`…and ${issues - MAX_WARNINGS} more (full list in the console)`);
+      $('#capture-warnings').replaceChildren(
+        ...shown.map((warning) => {
+          const li = document.createElement('li');
+          li.textContent = warning;
+          return li;
+        }),
+      );
+      $('#capture-output').hidden = false;
+    }
+    // The Clipboard API is blocked in plugin iframes; copying a selection still works.
+    $('#capture-copy').addEventListener('click', () => {
+      const textarea = $('#capture-json');
+      textarea.select();
+      const copied = document.execCommand('copy');
+      textarea.setSelectionRange(0, 0);
+      $('#capture-copy').textContent = copied ? 'Copied' : 'Select and copy';
+      setTimeout(() => ($('#capture-copy').textContent = 'Copy'), 1500);
+    });
+
     window.addEventListener('message', (event) => {
       const msg = event.data?.pluginMessage;
+      if (msg?.type === 'capture-result') showCapture(msg);
+      // The plugin shows the error itself; just make the form usable again.
+      if (msg?.type === 'create-failed') setCreating(false);
+      if (msg?.type === 'debug') showDebug(msg.info);
+      // Initial values from the plugin (e.g. the remembered contributor name).
       if (msg?.type !== 'init') return;
       if (msg.window) {
         Object.assign(WINDOW, msg.window);
         fitWindow();
+      }
+      if (msg.templates) showTemplates(msg.templates);
+      if (msg.features?.capture) $('#capture').hidden = false;
+      if (msg.version) {
+        $('#version').textContent = msg.version;
+        $('#version').hidden = false;
       }
       const contributors = $('#contributors');
       if (msg.contributors && !contributors.value) contributors.value = msg.contributors;

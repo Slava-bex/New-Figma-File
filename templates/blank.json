@@ -1,0 +1,9 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "order": 1,
+  "label": "Blank (thumbnail only)",
+  "heading": "Blank",
+  "nameLabel": "Title",
+  "fields": ["description", "contributors", "externalAccess"],
+  "pages": ["thumbnail"]
+}

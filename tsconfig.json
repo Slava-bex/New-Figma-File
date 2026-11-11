@@ -1,12 +1,23 @@
 {
   "compilerOptions": {
     "target": "es2020",
-    "lib": ["es2020"],
+    "lib": [
+      "es2020"
+    ],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
     "strict": true,
-    "types": ["plugin-typings"],
+    "types": [
+      "plugin-typings"
+    ],
     "typeRoots": [
       "./node_modules/@types",
       "./node_modules/@figma"
     ]
-  }
+  },
+  "include": [
+    "code.ts",
+    "src"
+  ]
 }

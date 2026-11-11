@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "common.schema.json",
+  "title": "New Figma File: shared definitions (pages and their content)",
+  "definitions": {
+    "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+    "fill": {
+      "description": "Hex color, or \"none\" for no fill (Figma's default is white).",
+      "oneOf": [{ "$ref": "#/definitions/hex" }, { "const": "none" }]
+    },
+    "direction": {
+      "description": "How items are laid out one after another.",
+      "enum": ["horizontal", "vertical"]
+    },
+    "name": { "description": "Layer name. {name} is replaced with the name entered in the form.", "type": "string" },
+    "x": { "description": "Fixed position. Without x/y, items are laid out one after another.", "type": "number" },
+    "y": { "type": "number" },
+    "page": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "description": "Page name. {name} is replaced with the name entered in the form.", "type": "string" },
+        "background": { "$ref": "#/definitions/hex" },
+        "renameFrom": {
+          "description": "Existing pages with one of these names are renamed instead of a new page being added.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "gap": { "description": "Space between top-level items (default 200).", "type": "number" },
+        "direction": { "$ref": "#/definitions/direction" },
+        "content": { "$ref": "#/definitions/items" }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "$ref": "#/definitions/componentItem" },
+          { "$ref": "#/definitions/sectionItem" },
+          { "$ref": "#/definitions/frameItem" }
+        ]
+      }
+    },
+    "componentItem": {
+      "description": "A library component: a name from _shared.json \"components\", or a published component key.",
+      "type": "object",
+      "required": ["component"],
+      "additionalProperties": false,
+      "properties": {
+        "component": { "type": "string" },
+        "detach": { "description": "Detach the instance after placing it. Components with a \"fill\" are always detached.", "type": "boolean" },
+        "setAsThumbnail": {
+          "description": "true: use the placed (detached) component as the file thumbnail. A string: use the frame with that layer name inside it.",
+          "type": ["boolean", "string"]
+        },
+        "name": { "$ref": "#/definitions/name" },
+        "x": { "$ref": "#/definitions/x" },
+        "y": { "$ref": "#/definitions/y" }
+      }
+    },
+    "sectionItem": {
+      "description": "A Figma section. Sections can sit on a page or in another section, not in a frame.",
+      "type": "object",
+      "required": ["section"],
+      "additionalProperties": false,
+      "properties": {
+        "section": { "description": "Section name. {name} is replaced with the name entered in the form.", "type": "string" },
+        "name": { "$ref": "#/definitions/name" },
+        "x": { "$ref": "#/definitions/x" },
+        "y": { "$ref": "#/definitions/y" },
+        "width": { "description": "Fixed size. Without it, the section fits its children.", "type": "number" },
+        "height": { "type": "number" },
+        "fill": { "$ref": "#/definitions/fill" },
+        "padding": { "description": "Space around children (default 100).", "type": "number" },
+        "gap": { "description": "Space between children (default 100).", "type": "number" },
+        "direction": { "$ref": "#/definitions/direction" },
+        "children": { "$ref": "#/definitions/items" }
+      }
+    },
+    "frameItem": {
+      "description": "A frame, optionally with children.",
+      "type": "object",
+      "required": ["frame"],
+      "additionalProperties": false,
+      "properties": {
+        "frame": { "description": "Frame name. {name} is replaced with the name entered in the form.", "type": "string" },
+        "name": { "$ref": "#/definitions/name" },
+        "x": { "$ref": "#/definitions/x" },
+        "y": { "$ref": "#/definitions/y" },
+        "width": { "description": "Fixed size. Without it, the frame fits its children.", "type": "number" },
+        "height": { "type": "number" },
+        "fill": { "$ref": "#/definitions/fill" },
+        "padding": { "description": "Space around children (default 100).", "type": "number" },
+        "gap": { "description": "Space between children (default 100).", "type": "number" },
+        "direction": { "$ref": "#/definitions/direction" },
+        "children": { "$ref": "#/definitions/items" }
+      }
+    }
+  }
+}

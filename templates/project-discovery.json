@@ -1,0 +1,9 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "order": 2,
+  "label": "Product Design: Project discovery",
+  "heading": "Project discovery",
+  "nameLabel": "Project name",
+  "fields": ["contributors", "githubIssueUrl", "products", "externalAccess"],
+  "pages": ["thumbnail"]
+}
