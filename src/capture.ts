@@ -3,18 +3,20 @@
 // behind the CAPTURE flag in code.ts.
 //
 // What's captured: pages (name, background), and on them sections, frames and
-// library component instances, with names, positions, sizes and fills.
-// Instances of a component named in _shared.json "components" (e.g. "start")
-// refer to it by name, so they get filled. Anything else (text, shapes,
-// groups, auto layout, instance overrides, …) is skipped and listed as a warning.
+// library component instances, with names, positions, sizes, fills and auto
+// layout. Instances that contain the thumbnail cover (e.g. "Start") are marked
+// "detach", so the frame around the cover is a regular frame and can become
+// the file thumbnail. Anything else (text, shapes, groups, instance
+// overrides, …) is skipped and listed as a warning.
 
-import { SHARED, type ContentItem, type PageDef } from './templates';
+import { FILLED_COMPONENTS, THUMBNAIL_COVER } from './create/fillers';
+import type { AutoLayout, ContentItem, PageDef, Sizing } from './templates';
 import { FORM_FIELDS } from './types';
 
 export interface CaptureResult {
   json: string;
-  /** Suggested file name, from the Figma file's name. */
-  fileName: string;
+  /** Suggested JSON file name in templates/, from the Figma file's name. */
+  saveAs: string;
   warnings: string[];
   pages: number;
   items: number;
@@ -38,14 +40,6 @@ export async function captureFile(): Promise<CaptureResult> {
   const warnings: string[] = [];
   let items = 0;
 
-  // Component key -> its name in _shared.json, e.g. the "Start" key -> "start".
-  const sharedNames = new Map(Object.entries(SHARED.components).map(([name, component]) => [component.key, name]));
-  let thumbnail: BaseNode | null = null;
-  try {
-    thumbnail = await figma.getFileThumbnailNodeAsync();
-  } catch {
-    // No custom thumbnail, or not available.
-  }
 
   /** "#RRGGBB" or "none" for a node's fills. */
   function fillOf(node: MinimalFillsMixin, where: string): string {
@@ -60,9 +54,48 @@ export async function captureFile(): Promise<CaptureResult> {
     return hex(solid.color);
   }
 
-  async function captureNode(node: SceneNode, path: string): Promise<ContentItem | null> {
+  /** Hug/fill sizing and absolute positioning, for nodes that have them. */
+  function layoutOf(node: SceneNode, inAutoLayout: boolean) {
+    const result: Pick<ContentItem, 'sizing' | 'absolute'> = {};
+    if (!('layoutSizingHorizontal' in node)) return result;
+    const sizing: { width?: Sizing; height?: Sizing } = {};
+    const own = node.type === 'FRAME' && node.layoutMode !== 'NONE';
+    const read = (value: 'FIXED' | 'HUG' | 'FILL') =>
+      value === 'FILL' && inAutoLayout ? 'fill' : value === 'HUG' && (own || inAutoLayout) ? 'hug' : undefined;
+    const width = read(node.layoutSizingHorizontal);
+    const height = read(node.layoutSizingVertical);
+    if (width) sizing.width = width;
+    if (height) sizing.height = height;
+    if (width || height) result.sizing = sizing;
+    if (inAutoLayout && 'layoutPositioning' in node && node.layoutPositioning === 'ABSOLUTE') result.absolute = true;
+    return result;
+  }
+
+  function autoLayoutOf(frame: FrameNode, where: string): AutoLayout {
+    const layout: AutoLayout = { direction: frame.layoutMode === 'VERTICAL' ? 'vertical' : 'horizontal' };
+    if (frame.layoutWrap === 'WRAP') {
+      layout.wrap = true;
+      if (frame.counterAxisSpacing) layout.wrapGap = round(frame.counterAxisSpacing);
+    }
+    if (frame.itemSpacing && frame.primaryAxisAlignItems !== 'SPACE_BETWEEN') layout.gap = round(frame.itemSpacing);
+    const padding = [frame.paddingTop, frame.paddingRight, frame.paddingBottom, frame.paddingLeft].map(round) as [number, number, number, number];
+    if (padding.some(Boolean)) layout.padding = padding.every((p) => p === padding[0]) ? padding[0] : padding;
+    const align = { MIN: 'start', CENTER: 'center', MAX: 'end', SPACE_BETWEEN: 'space-between' } as const;
+    const crossAlign = { MIN: 'start', CENTER: 'center', MAX: 'end', BASELINE: 'baseline' } as const;
+    const main = frame.primaryAxisAlignItems;
+    if (main === 'SPACE_EVENLY' || main === 'SPACE_AROUND') {
+      warnings.push(`${where}: "${main.toLowerCase()}" alignment isn't supported, captured as space-between`);
+      layout.align = 'space-between';
+    } else if (main !== 'MIN') layout.align = align[main];
+    if (frame.counterAxisAlignItems !== 'MIN') layout.crossAlign = crossAlign[frame.counterAxisAlignItems];
+    return layout;
+  }
+
+  async function captureNode(node: SceneNode, path: string, inAutoLayout = false): Promise<ContentItem | null> {
     const where = `${path} › ${node.name}`;
-    const position = { x: round(node.x), y: round(node.y) };
+    const layout = layoutOf(node, inAutoLayout);
+    // Inside auto layout, the frame positions its children.
+    const position = inAutoLayout && !layout.absolute ? {} : { x: round(node.x), y: round(node.y) };
 
     if (node.type === 'INSTANCE') {
       const main = await node.getMainComponentAsync();
@@ -73,37 +106,34 @@ export async function captureFile(): Promise<CaptureResult> {
       if (!main.remote) {
         warnings.push(`${where}: "${main.name}" is a local component. Publish it in a library, or the plugin can't place it`);
       }
-      const sharedName = sharedNames.get(main.key);
-      const filled = Boolean(sharedName && SHARED.components[sharedName].fill);
       // Filled components get the form data anyway, so their overrides don't matter.
-      if (!filled && node.overrides.length > 0) {
+      if (!FILLED_COMPONENTS.includes(node.name) && node.overrides.length > 0) {
         warnings.push(`${where}: changes made to this instance (overrides) aren't captured`);
       }
+      // The frame around the cover must be a regular frame to become the file thumbnail.
+      const detach = node.findOne((n) => n.type === 'INSTANCE' && n.name === THUMBNAIL_COVER) !== null;
       const name = node.name !== main.name ? node.name : undefined;
       items++;
-
-      const item: ContentItem = { component: sharedName ?? main.key, ...(name && { name }), ...position };
-      if (thumbnail?.id === node.id) item.setAsThumbnail = true;
-      else if (thumbnail && node.findOne((n) => n.id === thumbnail?.id)) item.setAsThumbnail = thumbnail.name;
-      return item;
+      return { component: main.key, ...(detach && { detach }), ...(name && { name }), ...position, ...layout };
     }
 
     if (node.type === 'SECTION' || node.type === 'FRAME') {
-      if (node.type === 'FRAME' && node.layoutMode !== 'NONE') {
-        warnings.push(`${where}: auto layout isn't captured; children keep their current positions`);
-      }
+      const autoLayout = node.type === 'FRAME' && node.layoutMode !== 'NONE' ? autoLayoutOf(node, where) : undefined;
       const children: ContentItem[] = [];
       for (const child of node.children) {
-        const item = await captureNode(child, where);
+        const item = await captureNode(child, where, !!autoLayout);
         if (item) children.push(item);
       }
       items++;
       return {
         ...(node.type === 'SECTION' ? { section: node.name } : { frame: node.name }),
         ...position,
-        width: round(node.width),
-        height: round(node.height),
+        // Hugging sides get their size from the children.
+        ...(layout.sizing?.width !== 'hug' && { width: round(node.width) }),
+        ...(layout.sizing?.height !== 'hug' && { height: round(node.height) }),
         fill: fillOf(node, where),
+        ...(autoLayout && { autoLayout }),
+        ...layout,
         ...(children.length && { children }),
       } as ContentItem;
     }
@@ -124,23 +154,22 @@ export async function captureFile(): Promise<CaptureResult> {
     pages.push({
       name: page.name,
       ...(background && { background: hex(background.color) }),
-      // A new file starts with "Page 1"; let the first page take it over.
-      ...(pages.length === 0 && { renameFrom: ['Page 1'] }),
       ...(content.length && { content }),
     });
   }
 
-  // A complete template file; label, nameLabel and fields are starting points to adjust.
+  // A complete template file; the form details above pages are adjusted by hand after capturing.
   const template = {
-    $schema: '../schemas/template.schema.json',
-    label: figma.root.name,
-    nameLabel: 'Name',
+    templateName: figma.root.name,
+    thumbnailTitleLabel: 'Name',
     fields: [...FORM_FIELDS],
+    fileName: '[Name]',
+    mainDesignPage: '',
     pages,
   };
   return {
     json: JSON.stringify(template, null, 2),
-    fileName: `${slug(figma.root.name)}.json`,
+    saveAs: `${slug(figma.root.name)}.json`,
     warnings,
     pages: pages.length,
     items,

@@ -1,28 +1,36 @@
-// Filler "thumbnail": puts the form data into the "Start" template, i.e. the
-// cover (title, contributors, product, privacy) and the info section below it
-// (links, project team). Source: Libraries - Touchpoints Overview, node 2204:11574.
-// The component's key is set in templates/_shared.json ("start").
+// Filler "thumbnail": puts the form data into the thumbnail cover (title,
+// description, contributors, product, privacy) and the GitHub "Link Item",
+// wherever they are in what the plugin placed. The frame directly around the
+// cover becomes the file thumbnail.
 //
-// The plugin finds layers by the names below, so renaming them in the
-// template means updating them here too.
+// The plugin finds layers by the names below, so renaming them in the library
+// means updating them here too.
 
 import type { NewFileData } from '../../types';
-import {
-  hide,
-  instanceLayer,
-  setLink,
-  setProperties,
-  setText,
-  show,
-  textLayer,
-  variantOptions,
-} from '../helpers';
+import { hide, instanceLayer, setLink, setProperties, setText, show, textLayer, variantOptions } from '../helpers';
+import type { Filler } from '.';
 
-export async function fillThumbnailTemplate(template: FrameNode, data: NewFileData) {
-  await fillCover(instanceLayer(template, 'Figma / Thumbnail Design File'), data);
-  await fillLinks(template, data);
-  // Project team (layer "Team Master") keeps its placeholders: the UI doesn't collect roles yet.
+export const COVER = 'Figma / Thumbnail Design File';
+export const LINK_ITEM = 'Link Item';
+
+/** `root` itself or the first layer inside it that is an instance named `name`. */
+function findInstance(root: SceneNode, name: string): InstanceNode | null {
+  if (root.type === 'INSTANCE' && root.name === name) return root;
+  if (!('findOne' in root)) return null;
+  return root.findOne((n) => n.type === 'INSTANCE' && n.name === name) as InstanceNode | null;
 }
+
+export const fillThumbnail: Filler = async (root, data) => {
+  const cover = findInstance(root, COVER);
+  if (cover) await fillCover(cover, data);
+
+  const linkItem = findInstance(root, LINK_ITEM);
+  if (linkItem) await fillLink(linkItem, data);
+  // Project team (layer "Team Master") keeps its placeholders: the UI doesn't collect roles yet.
+
+  // Figma only takes a frame as file thumbnail, not the cover instance itself.
+  return cover?.parent?.type === 'FRAME' ? { thumbnail: cover.parent } : {};
+};
 
 // ---- Cover ----
 
@@ -69,12 +77,12 @@ async function fillProduct(product: InstanceNode, products: string[]) {
 
 // ---- Links ----
 
-async function fillLinks(template: FrameNode, data: NewFileData) {
+async function fillLink(linkItem: InstanceNode, data: NewFileData) {
   if (!data.githubIssueUrl) return; // Keep the placeholder to fill in later.
-  const [label, link] = instanceLayer(template, 'Link Item').findAll(
+  const [label, link] = linkItem.findAll(
     (n): n is TextNode => n.type === 'TEXT' && n.name === 'Link Text',
   ) as TextNode[];
-  if (!label || !link) throw new Error('Template "Link Item" is missing its "Link Text" layers');
+  if (!label || !link) throw new Error('"Link Item" is missing its "Link Text" layers');
 
   const [, repo, number] = data.githubIssueUrl.match(/github\.com\/[^/]+\/([^/]+)\/issues\/(\d+)/) ?? [];
   await setText(label, 'GitHub issue');

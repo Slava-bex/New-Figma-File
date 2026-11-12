@@ -1,6 +1,6 @@
 {
   "name": "new-figma-file",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "Sets up page structure and a thumbnail in a new Figma file",
   "main": "code.js",
   "scripts": {

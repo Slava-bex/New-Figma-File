@@ -1,9 +1,18 @@
 {
-  "$schema": "../schemas/template.schema.json",
   "order": 2,
-  "label": "Product Design: Project discovery",
-  "heading": "Project discovery",
-  "nameLabel": "Project name",
-  "fields": ["contributors", "githubIssueUrl", "products", "externalAccess"],
-  "pages": ["thumbnail"]
+  "templateName": "Product Design: Project discovery",
+  "templateFormHeading": "Project discovery",
+  "thumbnailTitleLabel": "Project name",
+  "fields": ["githubIssueUrl", "products", "externalAccess"],
+  "fileName": "[Product] - [Project name]",
+  "mainDesignPage": "",
+  "pages": [
+    {
+      "name": "📷  Thumbnail",
+      "background": "#F4F4F4",
+      "content": [
+        { "component": "", "detach": true }
+      ]
+    }
+  ]
 }

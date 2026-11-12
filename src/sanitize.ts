@@ -50,5 +50,11 @@ export function sanitize(data: NewFileData): NewFileData | string {
   if (has('products') && Array.isArray(data.products)) {
     clean.products = data.products.map((product) => cleanText(product, LIMITS.product)).filter(Boolean);
   }
+  for (const field of template.requiredFields ?? []) {
+    const value = clean[field === 'externalAccess' ? 'externallyAccessible' : field];
+    if (Array.isArray(value) ? value.length === 0 : !value) {
+      return field === 'products' ? 'Select at least one product' : `${field} is required`;
+    }
+  }
   return clean;
 }
