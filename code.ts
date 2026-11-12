@@ -10,7 +10,8 @@ import {
 } from './src/contributor-memory';
 import { createFile } from './src/create';
 import { sanitize } from './src/sanitize';
-import { checkTemplates, templateSummaries } from './src/templates';
+import { fileNameFor } from './src/placeholders';
+import { checkTemplates, findTemplate, templateSummaries } from './src/templates';
 import type { NewFileData } from './src/types';
 import { DISPLAY_VERSION } from './src/version';
 
@@ -20,6 +21,7 @@ type UIMessage =
   | { type: 'open-url'; url: string }
   | { type: 'resize'; height: number }
   | { type: 'debug-clear-contributor' }
+  | { type: 'debug-file-name'; data: NewFileData }
   | { type: 'capture-file' };
 
 // Shows a "Capture this file as JSON" tool on the File type step: turns the
@@ -27,10 +29,11 @@ type UIMessage =
 // For building templates only; turn off before publishing.
 const CAPTURE = true;
 
-// Shows a debug panel at the bottom of the UI with the remembered contributor
-// name: what's stored, what was pre-filled, and what happened on Create.
+// Shows a debug panel under the form: a preview of the suggested file name, and
+// (for templates with a Contributors field) the remembered contributor name:
+// what's stored, what was pre-filled, and what happened on Create.
 // Turn off before publishing.
-const DEBUG = false;
+const DEBUG = true;
 
 async function sendDebug(extra: Record<string, unknown> = {}) {
   if (!DEBUG) return;
@@ -66,10 +69,10 @@ if (figma.editorType === 'figma') {
       figma.ui.postMessage({
         type: 'init',
         contributors,
-        // The File type list and each template's heading, name label and fields.
+        // The File type list and each template's form heading, thumbnail title label and fields.
         templates: templateSummaries(),
         version: DISPLAY_VERSION, // shown next to the File type heading
-        features: { capture: CAPTURE },
+        features: { capture: CAPTURE, debug: DEBUG },
         // The UI animates the window height within these bounds.
         window: { min: MIN_HEIGHT, max: MAX_HEIGHT },
       });
@@ -92,6 +95,14 @@ if (figma.editorType === 'figma') {
     if (msg.type === 'debug-clear-contributor') {
       await clearContributorName();
       await sendDebug({ prefill: '', lastSave: 'Cleared' });
+      return;
+    }
+
+    // The file name the form would get right now, from the same code Create uses.
+    if (msg.type === 'debug-file-name' && DEBUG) {
+      const template = findTemplate(msg.data.fileType);
+      const fileName = template ? fileNameFor(template, msg.data) : '';
+      figma.ui.postMessage({ type: 'debug-file-name', fileName });
       return;
     }
 
@@ -120,13 +131,15 @@ if (figma.editorType === 'figma') {
       await sendDebug({ lastSave: saveResult });
 
       try {
-        await createFile(data);
+        const { fileName } = await createFile(data);
+        // The plugin stays open on the "created" screen, which suggests the file name
+        // unless the file already has it.
+        const named = figma.root.name.trim() === fileName;
+        figma.ui.postMessage({ type: 'created', fileName: named ? null : fileName });
       } catch (error) {
         console.error(error);
         return fail(error instanceof Error ? error.message : String(error));
       }
-
-      figma.closePlugin(DEBUG ? `Created "${data.name}" · ${saveResult}` : `Created "${data.name}"`);
     }
   };
 }

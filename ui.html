@@ -133,6 +133,30 @@
       box-sizing: border-box;
     }
 
+    /* Step 3: created */
+    .success {
+      display: flex;
+      align-items: center;
+      gap: var(--spacer-2);
+      margin: 0;
+      padding: var(--spacer-3);
+      border-radius: var(--radius-medium, 6px);
+      background: var(--figma-color-bg-success-tertiary, #EEF7F2);
+      color: var(--figma-color-text-success, #14AE5C);
+    }
+    .file-name-row {
+      display: flex;
+      align-items: center;
+      gap: var(--spacer-2);
+    }
+    #file-name {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: var(--figma-color-text);
+    }
+    #file-name-copy svg { margin-right: var(--spacer-1); }
+
     /* Validation: message under a field, either an error or a soft limit notice. */
     :root {
       /* Fallback only; Figma's theme provides --figma-color-text-danger. */
@@ -228,6 +252,7 @@
       margin: 0;
     }
     #debug dt { color: var(--figma-color-text-secondary); }
+    #debug-contributor { margin-top: var(--spacer-2); }
     #debug dd { margin: 0; overflow-wrap: anywhere; }
 
     /* Capture tool (CAPTURE in code.ts) */
@@ -365,7 +390,7 @@
       <!-- Product -->
       <fig-stack direction="vertical" gap="2" full data-field="products">
         <p class="section-label" id="product-label">Product</p>
-        <fig-stack direction="vertical" gap="1" role="group" aria-labelledby="product-label">
+        <fig-stack id="product-group" direction="vertical" gap="1" role="group" aria-labelledby="product-label">
           <fig-checkbox name="product" value="PMS" label="PMS"></fig-checkbox>
           <fig-checkbox name="product" value="CMS" label="CMS"></fig-checkbox>
           <fig-checkbox name="product" value="RMS" label="RMS"></fig-checkbox>
@@ -390,13 +415,42 @@
       <fig-button id="create" size="large" full>Create file</fig-button>
     </section>
 
+    <!-- Step 3: shown after the file was built. Plugins can't rename the file, so the user copies the name. -->
+    <section class="step" id="step-done" hidden>
+      <p class="success" role="status">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        File structure created.
+      </p>
+      <!-- Hidden when the file already has the suggested name. -->
+      <fig-stack id="rename" direction="vertical" gap="1" full>
+        <p class="section-label">Rename your file to</p>
+        <div class="file-name-row">
+          <span id="file-name"></span>
+          <fig-button id="file-name-copy" variant="secondary">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor"/>
+              <path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" stroke="currentColor"/>
+            </svg>
+            <span id="file-name-copy-label">Copy</span>
+          </fig-button>
+        </div>
+      </fig-stack>
+    </section>
+
     <!-- Only shown when DEBUG is on in code.ts. -->
     <aside id="debug" hidden>
-      <div class="debug-header">
-        <strong>Debug · remembered contributor</strong>
-        <fig-button id="debug-clear" variant="ghost" size="small">Clear stored</fig-button>
+      <div class="debug-header"><strong>Debug · file name</strong></div>
+      <dl><dt>Preview</dt><dd id="debug-file-name">—</dd></dl>
+      <!-- Only for templates with a Contributors field. -->
+      <div id="debug-contributor">
+        <div class="debug-header">
+          <strong>Debug · remembered contributor</strong>
+          <fig-button id="debug-clear" variant="ghost" size="small">Clear stored</fig-button>
+        </div>
+        <dl id="debug-info"></dl>
       </div>
-      <dl id="debug-info"></dl>
     </aside>
   </div>
 
@@ -406,7 +460,7 @@
     // TODO: replace with the real "Figma File types at Bex" documentation URL.
     const FILE_TYPES_URL = 'https://www.figma.com/';
 
-    // Templates from templates/*.json, by id: { label, heading, nameLabel, fields }.
+    // Templates from templates/*.json, by id: { templateName, templateFormHeading, thumbnailTitleLabel, fields }.
     // Sent by the plugin with the init message.
     const FILE_TYPES = {};
 
@@ -431,7 +485,7 @@
           const icon = document.createElement('fig-icon');
           icon.setAttribute('name', 'back');
           icon.className = 'chevron-right';
-          row.append(template.label, ' ', icon);
+          row.append(template.templateName, ' ', icon);
           row.addEventListener('click', () => openDetails(template.id));
           return row;
         }),
@@ -441,16 +495,18 @@
     // Step 1 -> step 2: show only the sections the chosen template lists in "fields".
     function openDetails(type) {
       fileType = type;
-      $('#details-heading').textContent = FILE_TYPES[type].heading;
-      $('#name-label').textContent = FILE_TYPES[type].nameLabel;
+      $('#details-heading').textContent = FILE_TYPES[type].templateFormHeading;
+      $('#name-label').textContent = FILE_TYPES[type].thumbnailTitleLabel;
       for (const section of sections) {
         section.hidden = !FILE_TYPES[type].fields.includes(section.dataset.field);
       }
-      // Messages mention the field label, which depends on the file type.
+      applyRequired(FILE_TYPES[type].requiredFields);
+      // Messages mention the field label, which depends on the template.
       for (const id of Object.keys(FIELDS)) refresh(id);
       document.body.dataset.nav = 'forward';
       stepType.hidden = true;
       stepDetails.hidden = false;
+      updateDebug();
       $('#name').focus();
     }
 
@@ -461,6 +517,7 @@
       document.body.dataset.nav = 'back';
       stepDetails.hidden = true;
       stepType.hidden = false;
+      updateDebug();
       stepType.querySelector(`[data-type="${previous}"]`)?.focus();
     }
 
@@ -513,7 +570,7 @@
     };
 
     const fieldLabel = (id) =>
-      id === 'name' ? FILE_TYPES[fileType]?.nameLabel ?? 'Name' : $(`label[for="${id}"]`)?.firstChild.textContent.trim() ?? $(`#${id}`).getAttribute('aria-label');
+      id === 'name' ? FILE_TYPES[fileType]?.thumbnailTitleLabel ?? 'Name' : $(`label[for="${id}"]`)?.firstChild.textContent.trim() ?? $(`#${id}`).getAttribute('aria-label');
 
     // Creates (once) the message element shown under a field.
     function messageFor(input) {
@@ -590,6 +647,33 @@
       });
     }
 
+    // ---- Required fields per template ("requiredFields" in templates/<id>.json) ----
+    // Text fields by their input id; "products" is checked as a group.
+    const TEXT_FIELD_INPUTS = { description: 'description', contributors: 'contributors', githubIssueUrl: 'github-issue-url' };
+    const productGroup = $('#product-group');
+    let productsRequired = false;
+
+    function applyRequired(required) {
+      for (const [field, id] of Object.entries(TEXT_FIELD_INPUTS)) {
+        FIELDS[id].required = required.includes(field);
+        // A required field isn't "Optional", and isn't hidden behind a toggle.
+        const section = $(`[data-field="${field}"]`);
+        for (const tag of section.querySelectorAll('.tag')) tag.hidden = FIELDS[id].required;
+      }
+      if (FIELDS.description.required && descriptionToggle.getAttribute('aria-expanded') !== 'true') descriptionToggle.click();
+      productsRequired = required.includes('products');
+      showMessage(productGroup, null);
+    }
+
+    const productsMissing = () =>
+      productsRequired && isShown(productGroup) &&
+      ![...productGroup.querySelectorAll('fig-checkbox')].some((checkbox) => checkbox.checked);
+
+    // The error clears as soon as a product is ticked.
+    productGroup.addEventListener('change', () => {
+      if (!productsMissing()) showMessage(productGroup, null);
+    });
+
     // Validates the fields visible for the current file type; focuses the first invalid one.
     function validateVisibleFields() {
       let firstInvalid = null;
@@ -599,6 +683,10 @@
         touched.add(id);
         refresh(id);
         if (validate(id) && !firstInvalid) firstInvalid = input;
+      }
+      if (productsMissing()) {
+        showMessage(productGroup, 'Select at least one product', 'error');
+        firstInvalid ??= productGroup.querySelector('fig-checkbox');
       }
       firstInvalid?.focus();
       return !firstInvalid;
@@ -735,7 +823,7 @@
       };
     }
 
-    // Busy while the plugin builds the file (importing the template can take a moment).
+    // Busy while the plugin builds the file (importing library components can take a moment).
     const createButton = $('#create');
     const createLabel = createButton.textContent;
     function setCreating(creating) {
@@ -746,8 +834,12 @@
     createButton.addEventListener('click', () => {
       if (createButton.hasAttribute('disabled')) return;
       if (!fileType || !validateVisibleFields()) return;
+      setCreating(true);
+      post({ type: 'create-file', data: collectData() });
+    });
 
-      // Only send the fields that are visible for this file type, sanitized.
+    // Only the fields that are visible for this file type, sanitized.
+    function collectData() {
       const value = (id) => FIELDS[id].clean($(`#${id}`).value);
       const data = { fileType, name: value('name') };
       // Sent whenever the section applies, even if collapsed after typing.
@@ -762,12 +854,25 @@
           );
       }
       data.externallyAccessible = isShown($('#external-access')) && $('#external-access').checked;
+      return data;
+    }
 
-      setCreating(true);
-      post({ type: 'create-file', data });
-    });
+    // ---- Debug panel (DEBUG in code.ts) ----
+    // Shown on the form only: the file name preview always, the contributor
+    // memory only when the template has a Contributors field.
+    let debugEnabled = false;
+    function updateDebug() {
+      if (!debugEnabled) return;
+      const onForm = !stepDetails.hidden && fileType;
+      $('#debug').hidden = !onForm;
+      if (!onForm) return;
+      $('#debug-contributor').hidden = !FILE_TYPES[fileType].fields.includes('contributors');
+      post({ type: 'debug-file-name', data: collectData() });
+    }
+    // Any change in the form (typing, checkboxes, switch) updates the preview.
+    for (const event of ['input', 'change']) stepDetails.addEventListener(event, updateDebug, true);
 
-    // Debug panel: what the plugin stores and pre-fills for Contributors.
+    // What the plugin stores and pre-fills for Contributors.
     const debugState = {};
     function showDebug(info) {
       Object.assign(debugState, info);
@@ -788,7 +893,6 @@
           return [dt, dd];
         }),
       );
-      $('#debug').hidden = false;
     }
     $('#debug-clear').addEventListener('click', () => post({ type: 'debug-clear-contributor' }));
 
@@ -811,7 +915,7 @@
         `${result.pages} page${result.pages === 1 ? '' : 's'}, ${result.items} item${result.items === 1 ? '' : 's'}` +
         (issues ? `, ${issues} warning${issues === 1 ? '' : 's'} below.` : '.');
       $('#capture-json').value = result.json;
-      $('#capture-save-as').textContent = `Save as templates/${result.fileName}`;
+      $('#capture-save-as').textContent = `Save as templates/${result.saveAs}`;
       // Big files can produce thousands of warnings; the full list is in the console.
       const MAX_WARNINGS = 30;
       const shown = result.warnings.slice(0, MAX_WARNINGS);
@@ -826,21 +930,46 @@
       $('#capture-output').hidden = false;
     }
     // The Clipboard API is blocked in plugin iframes; copying a selection still works.
-    $('#capture-copy').addEventListener('click', () => {
-      const textarea = $('#capture-json');
+    function copyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.cssText = 'position:fixed;opacity:0;';
+      document.body.append(textarea);
       textarea.select();
       const copied = document.execCommand('copy');
-      textarea.setSelectionRange(0, 0);
-      $('#capture-copy').textContent = copied ? 'Copied' : 'Select and copy';
-      setTimeout(() => ($('#capture-copy').textContent = 'Copy'), 1500);
+      textarea.remove();
+      return copied;
+    }
+    function flashLabel(label, text) {
+      label.textContent = text;
+      setTimeout(() => (label.textContent = 'Copy'), 1500);
+    }
+    $('#capture-copy').addEventListener('click', () => {
+      flashLabel($('#capture-copy'), copyText($('#capture-json').value) ? 'Copied' : 'Select and copy');
     });
+    $('#file-name-copy').addEventListener('click', () => {
+      flashLabel($('#file-name-copy-label'), copyText($('#file-name').textContent) ? 'Copied' : 'Copy failed');
+    });
+
+    // Step 2 -> step 3, once the plugin has built the file.
+    // fileName is null when the file already has the suggested name.
+    function showCreated(fileName) {
+      $('#rename').hidden = !fileName;
+      $('#file-name').textContent = fileName ?? '';
+      document.body.dataset.nav = 'forward';
+      stepDetails.hidden = true;
+      $('#step-done').hidden = false;
+      updateDebug();
+    }
 
     window.addEventListener('message', (event) => {
       const msg = event.data?.pluginMessage;
       if (msg?.type === 'capture-result') showCapture(msg);
       // The plugin shows the error itself; just make the form usable again.
       if (msg?.type === 'create-failed') setCreating(false);
+      if (msg?.type === 'created') showCreated(msg.fileName);
       if (msg?.type === 'debug') showDebug(msg.info);
+      if (msg?.type === 'debug-file-name') $('#debug-file-name').textContent = msg.fileName || '—';
       // Initial values from the plugin (e.g. the remembered contributor name).
       if (msg?.type !== 'init') return;
       if (msg.window) {
@@ -849,6 +978,7 @@
       }
       if (msg.templates) showTemplates(msg.templates);
       if (msg.features?.capture) $('#capture').hidden = false;
+      debugEnabled = !!msg.features?.debug;
       if (msg.version) {
         $('#version').textContent = msg.version;
         $('#version').hidden = false;

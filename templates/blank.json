@@ -1,9 +1,18 @@
 {
-  "$schema": "../schemas/template.schema.json",
   "order": 1,
-  "label": "Blank (thumbnail only)",
-  "heading": "Blank",
-  "nameLabel": "Title",
+  "templateName": "Blank (thumbnail only)",
+  "templateFormHeading": "Blank",
+  "thumbnailTitleLabel": "Title",
   "fields": ["description", "contributors", "externalAccess"],
-  "pages": ["thumbnail"]
+  "fileName": "[Title]",
+  "mainDesignPage": "",
+  "pages": [
+    {
+      "name": "📷  Thumbnail",
+      "background": "#F4F4F4",
+      "content": [
+        { "component": "", "detach": true }
+      ]
+    }
+  ]
 }

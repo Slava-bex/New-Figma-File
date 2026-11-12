@@ -5,12 +5,11 @@
 
 import {
   checkTemplates,
+  DEFAULT_PAGE_NAME,
   findTemplate,
   isComponent,
   isFrame,
   isSection,
-  pagesFor,
-  resolveComponent,
   type ContentItem,
   type Direction,
   type FrameItem,
@@ -19,33 +18,46 @@ import {
 } from '../templates';
 import type { NewFileData } from '../types';
 import { FILLERS } from './fillers';
-import { CreateContext, interpolate, layer, placeComponent, setFileThumbnail, solid, type Parent } from './helpers';
+import { fileNameFor, interpolate } from '../placeholders';
+import { CreateContext, placeComponent, setFileThumbnail, solid, type Parent } from './helpers';
 
 const DEFAULT_PAGE_GAP = 200;
 const DEFAULT_CONTAINER = { padding: 100, gap: 100, minSize: 100 };
 
-export async function createFile(data: NewFileData): Promise<void> {
+/** Fills placeholders like [Product] in a page or layer name. */
+type Names = (text: string) => string;
+
+/** Builds the file and returns the suggested file name (plugins can't rename the file themselves). */
+export async function createFile(data: NewFileData): Promise<{ fileName: string }> {
   const errors = checkTemplates();
   if (errors.length) throw new Error(`templates/${errors[0]}`);
   const template = findTemplate(data.fileType);
   if (!template) throw new Error(`Unknown template "${data.fileType}"`);
 
-  // Fillers look up layers that templates hide by default (e.g. Contributors).
+  // Fillers look up layers that library components hide by default (e.g. Contributors).
   figma.skipInvisibleInstanceChildren = false;
 
+  const names: Names = (text) => interpolate(text, template, data);
   const ctx = new CreateContext();
   const originalOrder = [...figma.root.children];
   ctx.onRollback(() => restorePageOrder(originalOrder)); // runs last
 
-  for (const [index, def] of pagesFor(template).entries()) {
+  for (const [index, def] of template.pages.entries()) {
     try {
-      const page = await ensurePage(ctx, def, data);
-      figma.root.insertChild(index, page); // pages follow the structure's order
-      await placeItems(ctx, page, def.content ?? [], data, {
+      const page = await ensurePage(ctx, def, names, def.name === template.mainDesignPage);
+      figma.root.insertChild(index, page); // pages follow the template's order
+      const placed = await placeItems(ctx, page, def.content ?? [], names, {
         gap: def.gap ?? DEFAULT_PAGE_GAP,
         direction: def.direction ?? 'horizontal',
         origin: startOfFreeSpace(page, def.gap ?? DEFAULT_PAGE_GAP),
       });
+      // Put the form data into whatever library components were placed.
+      for (const node of placed) {
+        for (const fill of FILLERS) {
+          const { thumbnail } = await fill(node, data);
+          ctx.thumbnail ??= thumbnail ?? null;
+        }
+      }
     } catch (error) {
       ctx.rollback();
       const message = error instanceof Error ? error.message : String(error);
@@ -61,6 +73,8 @@ export async function createFile(data: NewFileData): Promise<void> {
     const nodes = ctx.firstPage.children;
     if (nodes.length) figma.viewport.scrollAndZoomIntoView(nodes);
   }
+
+  return { fileName: fileNameFor(template, data) };
 }
 
 // ---- Pages ----
@@ -70,15 +84,15 @@ const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 /**
  * The page for a definition, in this order of preference:
  * 1. an existing page that already has the name,
- * 2. an existing page named like one of `renameFrom`, renamed,
+ * 2. for the template's main design page: the file's "Page 1", renamed (its content stays),
  * 3. a new page.
  */
-async function ensurePage(ctx: CreateContext, def: PageDef, data: NewFileData): Promise<PageNode> {
-  const name = interpolate(def.name, data);
+async function ensurePage(ctx: CreateContext, def: PageDef, names: Names, isMainDesignPage: boolean): Promise<PageNode> {
+  const name = names(def.name);
   const available = figma.root.children.filter((p) => !ctx.claimedPages.has(p));
   let page =
     available.find((p) => sameName(p.name, name)) ??
-    available.find((p) => def.renameFrom?.some((from) => sameName(p.name, interpolate(from, data))));
+    (isMainDesignPage ? available.find((p) => sameName(p.name, DEFAULT_PAGE_NAME)) : undefined);
 
   if (page) {
     const existing = page;
@@ -121,11 +135,30 @@ interface Flow {
   origin: { x: number; y: number };
 }
 
-/** Builds items one after another (unless they have a fixed x/y). */
-async function placeItems(ctx: CreateContext, parent: Parent, items: ContentItem[], data: NewFileData, flow: Flow) {
-  let { x, y } = flow.origin;
+const SIZING = { fixed: 'FIXED', hug: 'HUG', fill: 'FILL' } as const;
+
+/**
+ * Builds items one after another (unless they have a fixed x/y). Inside auto
+ * layout, the frame positions them instead. Returns the created nodes.
+ */
+async function placeItems(ctx: CreateContext, parent: Parent, items: ContentItem[], names: Names, flow: Flow | 'auto-layout') {
+  const nodes: SceneNode[] = [];
+  let { x, y } = flow === 'auto-layout' ? { x: 0, y: 0 } : flow.origin;
   for (const item of items) {
-    const node = await buildItem(ctx, parent, item, data);
+    const node = await buildItem(ctx, parent, item, names);
+    nodes.push(node);
+    if (item.sizing && 'layoutSizingHorizontal' in node) {
+      if (item.sizing.width) node.layoutSizingHorizontal = SIZING[item.sizing.width];
+      if (item.sizing.height) node.layoutSizingVertical = SIZING[item.sizing.height];
+    }
+    if (flow === 'auto-layout') {
+      if (item.absolute && 'layoutPositioning' in node) {
+        node.layoutPositioning = 'ABSOLUTE';
+        node.x = item.x ?? 0;
+        node.y = item.y ?? 0;
+      }
+      continue;
+    }
     if (item.x !== undefined || item.y !== undefined) {
       node.x = item.x ?? 0;
       node.y = item.y ?? 0;
@@ -136,19 +169,15 @@ async function placeItems(ctx: CreateContext, parent: Parent, items: ContentItem
     if (flow.direction === 'horizontal') x += node.width + flow.gap;
     else y += node.height + flow.gap;
   }
+  return nodes;
 }
 
-async function buildItem(ctx: CreateContext, parent: Parent, item: ContentItem, data: NewFileData): Promise<SceneNode> {
+async function buildItem(ctx: CreateContext, parent: Parent, item: ContentItem, names: Names): Promise<SceneNode> {
   if (isComponent(item)) {
-    const { key, fill, detach } = resolveComponent(item);
-    const instance = await placeComponent(ctx, key, parent);
+    const instance = await placeComponent(ctx, item.component, parent);
     // Nested library instances (thumbnail cover, link items, …) stay linked when detaching.
-    const node = detach ? ctx.track(instance.detachInstance()) : instance;
-    if (item.name) node.name = interpolate(item.name, data);
-    if (fill && node.type === 'FRAME') await FILLERS[fill](node, data);
-    if (item.setAsThumbnail) {
-      ctx.thumbnail = typeof item.setAsThumbnail === 'string' ? layer(node, item.setAsThumbnail, 'FRAME') : (node as FrameNode);
-    }
+    const node = item.detach ? ctx.track(instance.detachInstance()) : instance;
+    if (item.name) node.name = names(item.name);
     return node;
   }
 
@@ -156,28 +185,51 @@ async function buildItem(ctx: CreateContext, parent: Parent, item: ContentItem, 
     if (parent.type === 'FRAME') throw new Error(`Section "${item.section}" can't go inside a frame`);
     const section = ctx.track(figma.createSection());
     parent.appendChild(section);
-    section.name = interpolate(item.name ?? item.section, data);
-    await fillContainer(ctx, section, item, data);
+    section.name = names(item.name ?? item.section);
+    await fillContainer(ctx, section, item, names);
     return section;
   }
 
   if (isFrame(item)) {
     const frame = ctx.track(figma.createFrame());
     parent.appendChild(frame);
-    frame.name = interpolate(item.name ?? item.frame, data);
-    await fillContainer(ctx, frame, item, data);
+    frame.name = names(item.name ?? item.frame);
+    await fillContainer(ctx, frame, item, names);
     return frame;
   }
 
   throw new Error(`Unknown item ${JSON.stringify(item)}`);
 }
 
+const ALIGN = { start: 'MIN', center: 'CENTER', end: 'MAX', 'space-between': 'SPACE_BETWEEN', baseline: 'BASELINE' } as const;
+
 /** Adds a section's or frame's children, then sizes it (fixed, or fitting its children). */
-async function fillContainer(ctx: CreateContext, container: SectionNode | FrameNode, item: SectionItem | FrameItem, data: NewFileData) {
+async function fillContainer(ctx: CreateContext, container: SectionNode | FrameNode, item: SectionItem | FrameItem, names: Names) {
   if (item.fill) container.fills = item.fill === 'none' ? [] : [solid(item.fill)];
+
+  if (container.type === 'FRAME' && 'autoLayout' in item && item.autoLayout) {
+    const layout = item.autoLayout;
+    container.layoutMode = layout.direction === 'vertical' ? 'VERTICAL' : 'HORIZONTAL';
+    if (layout.wrap) container.layoutWrap = 'WRAP';
+    container.itemSpacing = layout.gap ?? 0;
+    if (layout.wrap && layout.wrapGap !== undefined) container.counterAxisSpacing = layout.wrapGap;
+    const [top, right, bottom, left] =
+      typeof layout.padding === 'number' ? [layout.padding, layout.padding, layout.padding, layout.padding] : (layout.padding ?? [0, 0, 0, 0]);
+    Object.assign(container, { paddingTop: top, paddingRight: right, paddingBottom: bottom, paddingLeft: left });
+    container.primaryAxisAlignItems = ALIGN[layout.align ?? 'start'] as FrameNode['primaryAxisAlignItems'];
+    container.counterAxisAlignItems = ALIGN[layout.crossAlign ?? 'start'] as FrameNode['counterAxisAlignItems'];
+
+    await placeItems(ctx, container, item.children ?? [], names, 'auto-layout');
+    container.resize(item.width ?? container.width, item.height ?? container.height);
+    // Without a size, the frame hugs its children (placeItems applies item.sizing afterwards).
+    if (item.width === undefined) container.layoutSizingHorizontal = 'HUG';
+    if (item.height === undefined) container.layoutSizingVertical = 'HUG';
+    return;
+  }
+
   const padding = item.padding ?? DEFAULT_CONTAINER.padding;
   const children = item.children ?? [];
-  await placeItems(ctx, container, children, data, {
+  await placeItems(ctx, container, children, names, {
     gap: item.gap ?? DEFAULT_CONTAINER.gap,
     direction: item.direction ?? 'horizontal',
     origin: { x: padding, y: padding },

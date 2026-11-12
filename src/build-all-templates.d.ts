@@ -1,5 +1,5 @@
 // Provided at build time by scripts/build-code.mjs from templates/*.json.
-declare module 'virtual:templates' {
-  const data: { shared: unknown; templates: unknown[] };
+declare module 'build:all-templates' {
+  const data: { templates: unknown[] };
   export default data;
 }

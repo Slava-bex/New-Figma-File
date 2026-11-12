@@ -4,7 +4,7 @@
 /** Tracks what a run changes, so a failed run can be undone. */
 export class CreateContext {
   private readonly undo: (() => void)[] = [];
-  /** The page to show when the run finishes (the first one in the structure). */
+  /** The page to show when the run finishes (the template's first page). */
   firstPage: PageNode | null = null;
   /** Pages already used by this run, so two page definitions never share one. */
   readonly claimedPages = new Set<PageNode>();
@@ -63,7 +63,7 @@ export function layer<T extends SceneNode['type']>(
   type?: T,
 ): Extract<SceneNode, { type: T }> {
   const node = root.findOne((n) => n.name === name && (!type || n.type === type));
-  if (!node) throw new Error(`Template is missing the layer "${name}"`);
+  if (!node) throw new Error(`Component is missing the layer "${name}"`);
   return node as Extract<SceneNode, { type: T }>;
 }
 
@@ -96,7 +96,7 @@ export function setProperties(instance: InstanceNode, values: Record<string, str
   const resolved: Record<string, string | boolean> = {};
   for (const [name, value] of Object.entries(values)) {
     const key = keys.find((k) => k === name || k.startsWith(`${name}#`));
-    if (!key) throw new Error(`Template "${instance.name}" has no property "${name}"`);
+    if (!key) throw new Error(`Component "${instance.name}" has no property "${name}"`);
     resolved[key] = value;
   }
   instance.setProperties(resolved);
@@ -124,9 +124,6 @@ export function solid(hex: string): SolidPaint {
   const channel = (i: number) => parseInt(value.slice(i, i + 2), 16) / 255;
   return { type: 'SOLID', color: { r: channel(0), g: channel(2), b: channel(4) } };
 }
-
-/** Replaces "{name}" with the name entered in the form. */
-export const interpolate = (text: string, values: { name: string }) => text.replace(/\{name\}/g, values.name);
 
 /** Uses `node` as the file's thumbnail. Not critical, so failures are only logged. */
 export async function setFileThumbnail(node: FrameNode) {
