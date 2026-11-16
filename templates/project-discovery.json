@@ -3,16 +3,47 @@
   "templateName": "Product Design: Project discovery",
   "templateFormHeading": "Project discovery",
   "thumbnailTitleLabel": "Project name",
-  "fields": ["githubIssueUrl", "products", "externalAccess"],
+  "fields": [
+    "githubIssueUrl",
+    "products",
+    "externalAccess"
+  ],
+  "requiredFields": [],
   "fileName": "[Product] - [Project name]",
-  "mainDesignPage": "",
+  "mainDesignPage": "🚧  CONCEPT: [Project name]",
   "pages": [
     {
       "name": "📷  Thumbnail",
-      "background": "#F4F4F4",
+      "background": "#ECECEC",
       "content": [
-        { "component": "", "detach": true }
+        {
+          "component": "d22672c9bcc60288d622e8110b1a887be98cc67f",
+          "detach": true,
+          "x": 0,
+          "y": 0
+        }
       ]
+    },
+    {
+      "name": "-"
+    },
+    {
+      "name": "🚧  CONCEPT: [Project name]",
+      "background": "#ECECEC"
+    },
+    {
+      "name": "-"
+    },
+    {
+      "name": "❖  Local components",
+      "background": "#ECECEC"
+    },
+    {
+      "name": "-"
+    },
+    {
+      "name": "🗄️  Archive",
+      "background": "#ECECEC"
     }
   ]
 }

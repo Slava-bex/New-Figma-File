@@ -148,6 +148,10 @@
       display: flex;
       align-items: center;
       gap: var(--spacer-2);
+      /* Full width of the vertical fig-stack, so #file-name can take the space left of Copy. */
+      align-self: stretch;
+      width: 100%;
+      box-sizing: border-box;
     }
     #file-name {
       flex: 1;
@@ -303,7 +307,8 @@
 <body>
   <div id="app">
     <!-- Step 1: choose a file type -->
-    <section class="step" id="step-type">
+    <!-- Hidden until the init message: FigJam skips this step and opens the form directly. -->
+    <section class="step" id="step-type" hidden>
       <div class="step-header">
         <h2>File type</h2>
         <!-- Filled from package.json "version" (sent with the init message). -->
@@ -324,7 +329,7 @@
       <!-- Template building tool, only shown when CAPTURE is on in code.ts. -->
       <aside id="capture" class="dev-panel" hidden>
         <div class="dev-panel-header">
-          <strong>Capture this file as JSON</strong>
+          <strong>Capture this file as JSON template</strong>
           <fig-button id="capture-run" variant="secondary" size="small">Capture</fig-button>
         </div>
         <p class="dev-panel-note" id="capture-status">
@@ -394,9 +399,10 @@
           <fig-checkbox name="product" value="PMS" label="PMS"></fig-checkbox>
           <fig-checkbox name="product" value="CMS" label="CMS"></fig-checkbox>
           <fig-checkbox name="product" value="RMS" label="RMS"></fig-checkbox>
-          <fig-checkbox name="product" value="Payment Portal" label="Payment Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Guest Portal" label="Guest Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Payment Portal" label="Payment Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Owner Portal" label="Owner Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Executor Portal" label="Executor Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Media Library" label="Media Library"></fig-checkbox>
           <fig-checkbox name="product" value="Butler" label="Butler"></fig-checkbox>
           <fig-checkbox id="product-other" name="product" value="Other" label="Other"></fig-checkbox>
@@ -421,7 +427,7 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        File structure created.
+        <span id="done-message">File structure created.</span>
       </p>
       <!-- Hidden when the file already has the suggested name. -->
       <fig-stack id="rename" direction="vertical" gap="1" full>
@@ -825,10 +831,12 @@
 
     // Busy while the plugin builds the file (importing library components can take a moment).
     const createButton = $('#create');
-    const createLabel = createButton.textContent;
+    // FigJam changes these (see the init message).
+    let createLabel = createButton.textContent;
+    let creatingLabel = 'Creating…';
     function setCreating(creating) {
       createButton.toggleAttribute('disabled', creating);
-      createButton.textContent = creating ? 'Creating…' : createLabel;
+      createButton.textContent = creating ? creatingLabel : createLabel;
     }
 
     createButton.addEventListener('click', () => {
@@ -979,6 +987,18 @@
       if (msg.templates) showTemplates(msg.templates);
       if (msg.features?.capture) $('#capture').hidden = false;
       debugEnabled = !!msg.features?.debug;
+      // FigJam: never a File type list; the (only) FigJam template's form right away, without a slide-in.
+      if (msg.editor === 'figjam' && msg.templates?.length) {
+        $('#back').hidden = true;
+        createLabel = 'Insert thumbnail';
+        creatingLabel = 'Inserting…';
+        createButton.textContent = createLabel;
+        $('#done-message').textContent = 'Thumbnail inserted.';
+        openDetails(msg.templates[0].id);
+        delete document.body.dataset.nav;
+      } else {
+        stepType.hidden = false;
+      }
       if (msg.version) {
         $('#version').textContent = msg.version;
         $('#version').hidden = false;

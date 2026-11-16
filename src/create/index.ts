@@ -1,11 +1,13 @@
 // Builds a file from its template (templates/<id>.json): pages (created,
 // reused or renamed) and their content (library components, sections, frames).
+// In FigJam, a FigJam template's content goes on the current board instead.
 // Everything it changes is undone if any step fails, so a file is never left
 // half-built.
 
 import {
-  checkTemplates,
+  checkTemplate,
   DEFAULT_PAGE_NAME,
+  editorOf,
   findTemplate,
   isComponent,
   isFrame,
@@ -15,10 +17,12 @@ import {
   type FrameItem,
   type PageDef,
   type SectionItem,
+  type TemplateDef,
+  templateWarnings,
 } from '../templates';
 import type { NewFileData } from '../types';
 import { FILLERS } from './fillers';
-import { fileNameFor, interpolate } from '../placeholders';
+import { fileNameFor, nameFor } from '../placeholders';
 import { CreateContext, placeComponent, setFileThumbnail, solid, type Parent } from './helpers';
 
 const DEFAULT_PAGE_GAP = 200;
@@ -27,25 +31,54 @@ const DEFAULT_CONTAINER = { padding: 100, gap: 100, minSize: 100 };
 /** Fills placeholders like [Product] in a page or layer name. */
 type Names = (text: string) => string;
 
-/** Builds the file and returns the suggested file name (plugins can't rename the file themselves). */
-export async function createFile(data: NewFileData): Promise<{ fileName: string }> {
-  const errors = checkTemplates();
-  if (errors.length) throw new Error(`templates/${errors[0]}`);
+/**
+ * Builds the file and returns the suggested file name (plugins can't rename the
+ * file themselves) and any template warnings to show afterwards.
+ */
+export async function createFile(data: NewFileData): Promise<{ fileName: string; warnings: string[] }> {
   const template = findTemplate(data.fileType);
   if (!template) throw new Error(`Unknown template "${data.fileType}"`);
+  // Only this template's problems matter; others don't stop it.
+  const errors = checkTemplate(template);
+  if (errors.length) {
+    console.error(`Template can't be built:\n${errors.join('\n')}`);
+    throw new Error(errors[0]);
+  }
 
   // Fillers look up layers that library components hide by default (e.g. Contributors).
   figma.skipInvisibleInstanceChildren = false;
 
-  const names: Names = (text) => interpolate(text, template, data);
+  const editor = editorOf(template);
+  if (editor !== figma.editorType) {
+    const where = editor === 'figjam' ? 'FigJam' : 'Figma design files';
+    throw new Error(`Couldn't use the template "${template.templateName}": it only works in ${where}.`);
+  }
+
+  const names: Names = (text) => nameFor(text, template, data);
   const ctx = new CreateContext();
+
+  if (editor === 'figjam') {
+    await insertOnBoard(ctx, template, data, names);
+    return { fileName: fileNameFor(template, data), warnings: templateWarnings(template) };
+  }
+
   const originalOrder = [...figma.root.children];
   ctx.onRollback(() => restorePageOrder(originalOrder)); // runs last
 
-  for (const [index, def] of template.pages.entries()) {
+  const notices: string[] = [];
+  // Where the next template page goes: right after the previous one.
+  let position = 0;
+  for (const def of template.pages) {
     try {
-      const page = await ensurePage(ctx, def, names, def.name === template.mainDesignPage);
-      figma.root.insertChild(index, page); // pages follow the template's order
+      const result = await ensurePage(ctx, def, names, def.name === template.mainDesignPage);
+      if ('skipped' in result) {
+        notices.push(`Skipped creating page "${result.skipped.name}": the file already has it.`);
+        position = figma.root.children.indexOf(result.skipped) + 1;
+        continue;
+      }
+      const page = result;
+      figma.root.insertChild(Math.min(position, figma.root.children.length - 1), page);
+      position = figma.root.children.indexOf(page) + 1;
       const placed = await placeItems(ctx, page, def.content ?? [], names, {
         gap: def.gap ?? DEFAULT_PAGE_GAP,
         direction: def.direction ?? 'horizontal',
@@ -61,7 +94,7 @@ export async function createFile(data: NewFileData): Promise<{ fileName: string 
     } catch (error) {
       ctx.rollback();
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Page "${def.name}": ${message}`);
+      throw new Error(`${message} (page "${def.name}")`);
     }
   }
 
@@ -74,7 +107,53 @@ export async function createFile(data: NewFileData): Promise<{ fileName: string 
     if (nodes.length) figma.viewport.scrollAndZoomIntoView(nodes);
   }
 
-  return { fileName: fileNameFor(template, data) };
+  return { fileName: fileNameFor(template, data), warnings: [...notices, ...templateWarnings(template)] };
+}
+
+// ---- FigJam ----
+
+/**
+ * FigJam: places the template's content on the current board, centered in view,
+ * and fills it in. Pages aren't created or changed. The file thumbnail isn't set
+ * (FigJam doesn't support it). Undone completely if any step fails.
+ */
+async function insertOnBoard(ctx: CreateContext, template: TemplateDef, data: NewFileData, names: Names) {
+  const board = figma.currentPage;
+  const center = figma.viewport.center;
+  const placed: SceneNode[] = [];
+  try {
+    let origin = { x: center.x, y: center.y };
+    for (const def of template.pages) {
+      const gap = def.gap ?? DEFAULT_PAGE_GAP;
+      const nodes = await placeItems(ctx, board, def.content ?? [], names, {
+        gap,
+        direction: def.direction ?? 'horizontal',
+        origin,
+      });
+      placed.push(...nodes);
+      if (nodes.length) origin = { x: Math.max(...nodes.map((n) => n.x + n.width)) + gap, y: center.y };
+    }
+    for (const node of placed) {
+      for (const fill of FILLERS) await fill(node, data);
+    }
+  } catch (error) {
+    ctx.rollback();
+    throw error;
+  }
+  if (placed.length === 0) return;
+
+  // Center what was inserted (items with a fixed x/y in the template included) in the current view.
+  const left = Math.min(...placed.map((n) => n.x));
+  const top = Math.min(...placed.map((n) => n.y));
+  const right = Math.max(...placed.map((n) => n.x + n.width));
+  const bottom = Math.max(...placed.map((n) => n.y + n.height));
+  const dx = Math.round(center.x - (left + right) / 2);
+  const dy = Math.round(center.y - (top + bottom) / 2);
+  for (const node of placed) {
+    node.x += dx;
+    node.y += dy;
+  }
+  figma.viewport.scrollAndZoomIntoView(placed);
 }
 
 // ---- Pages ----
@@ -82,17 +161,24 @@ export async function createFile(data: NewFileData): Promise<{ fileName: string 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
- * The page for a definition, in this order of preference:
- * 1. an existing page that already has the name,
- * 2. for the template's main design page: the file's "Page 1", renamed (its content stays),
- * 3. a new page.
+ * The page to build a definition on:
+ * - if the file already has a page with that name: none, it's skipped and left as it is,
+ * - for the template's main design page: the file's "Page 1", renamed (its content stays),
+ * - otherwise a new page.
  */
-async function ensurePage(ctx: CreateContext, def: PageDef, names: Names, isMainDesignPage: boolean): Promise<PageNode> {
+async function ensurePage(
+  ctx: CreateContext,
+  def: PageDef,
+  names: Names,
+  isMainDesignPage: boolean,
+): Promise<PageNode | { skipped: PageNode }> {
   const name = names(def.name);
+  // Pages this run made are excluded, so a template can repeat a page name.
   const available = figma.root.children.filter((p) => !ctx.claimedPages.has(p));
-  let page =
-    available.find((p) => sameName(p.name, name)) ??
-    (isMainDesignPage ? available.find((p) => sameName(p.name, DEFAULT_PAGE_NAME)) : undefined);
+  const existing = available.find((p) => sameName(p.name, name));
+  if (existing) return { skipped: existing };
+
+  let page = isMainDesignPage ? available.find((p) => sameName(p.name, DEFAULT_PAGE_NAME)) : undefined;
 
   if (page) {
     const existing = page;

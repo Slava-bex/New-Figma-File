@@ -9,6 +9,7 @@ Each JSON file in this folder is one template in the plugin's **File type** list
 3. Open the template file in Figma, run the plugin and click **Capture** at the bottom of the File type step.
 4. Copy the JSON into this folder under the suggested file name, or over the template it replaces.
 5. Set the form details at the top of the file:
+   - `editor`: `"figma"` (default) or `"figjam"`. FigJam opens straight on the first FigJam template's form and places its content on the current board, without touching pages.
    - `templateName`: name in the File type list
    - `order`: position in the list
    - `thumbnailTitleLabel`: label of the name field, e.g. "Project name"
@@ -24,5 +25,20 @@ To remove a template, delete its file.
 
 ## Requirements for the Figma template file
 
-- **Build it from sections, frames and published library components only.** Auto layout is captured. Text, shapes, groups and changes made to instances aren't captured due to simplicity of the plugin choice. The capture lists them as warnings.
-- **Thumbnail instnance must be wrapped in a regular frame.** The plugin uses wrapper frame as the file thumbnail, since Figma can't use instances as thumbnails.
+- **Build it from sections, frames and published library components only.** Auto layout is captured. Text, shapes, groups and changes made to instances aren't captured due to the decision to keep the plugin simple. The capture shows unsupported layers as warnings.
+- **Thumbnail instnance must be wrapped in a regular frame.** The plugin eventually uses wrapper frame as the file thumbnail, since Figma can't use instances as thumbnails.
+
+## File name placeholders
+
+Capturing templates as JSON uses source file's file name and supports placeholders, for example: `[Product] - [Feature name]`. The values are collected from user input in the plug-in UI.
+
+Available placeholders:
+
+| Placeholder | Filled with | Available in |
+|---|---|---|
+| `[Product]` | The selected product, only when exactly one is selected | All templates |
+| `[Title]` | The Title field | Blank |
+| `[Project name]` | The Project name field | Project discovery, Project hand-off |
+| `[Feature name]` | The Feature name field | Living feature file |
+
+Empty placeholders are left out together with the separator next to them (`-`, `|`, `/`, `:`, …).

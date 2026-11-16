@@ -1,4 +1,4 @@
-import { findTemplate } from './templates';
+import { fieldsOf, findTemplate, requiredFieldsOf } from './templates';
 import type { NewFileData } from './types';
 
 // Same constraints as the UI (Figma: "Input validation & constraints"). The UI
@@ -30,7 +30,8 @@ export function sanitize(data: NewFileData): NewFileData | string {
   if (name.length < LIMITS.name.min) return `Name needs at least ${LIMITS.name.min} characters`;
 
   // Only keep the fields this template shows.
-  const has = (field: (typeof template.fields)[number]) => template.fields.includes(field);
+  const fields = fieldsOf(template);
+  const has = (field: (typeof fields)[number]) => fields.includes(field);
   const clean: NewFileData = {
     fileType: template.id,
     name,
@@ -50,8 +51,9 @@ export function sanitize(data: NewFileData): NewFileData | string {
   if (has('products') && Array.isArray(data.products)) {
     clean.products = data.products.map((product) => cleanText(product, LIMITS.product)).filter(Boolean);
   }
-  for (const field of template.requiredFields ?? []) {
-    const value = clean[field === 'externalAccess' ? 'externallyAccessible' : field];
+  for (const field of requiredFieldsOf(template)) {
+    if (field === 'externalAccess') continue; // a switch; never required (requiredFieldsOf drops it)
+    const value = clean[field];
     if (Array.isArray(value) ? value.length === 0 : !value) {
       return field === 'products' ? 'Select at least one product' : `${field} is required`;
     }

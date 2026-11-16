@@ -24,7 +24,7 @@ type UIMessage =
   | { type: 'debug-file-name'; data: NewFileData }
   | { type: 'capture-file' };
 
-// Shows a "Capture this file as JSON" tool on the File type step: turns the
+// Shows a "Capture this file as JSON template" tool on the File type step: turns the
 // open file into a template file for templates/ (see templates/README.md).
 // For building templates only; turn off before publishing.
 const CAPTURE = true;
@@ -33,7 +33,7 @@ const CAPTURE = true;
 // (for templates with a Contributors field) the remembered contributor name:
 // what's stored, what was pre-filled, and what happened on Create.
 // Turn off before publishing.
-const DEBUG = true;
+const DEBUG = false;
 
 async function sendDebug(extra: Record<string, unknown> = {}) {
   if (!DEBUG) return;
@@ -47,17 +47,23 @@ const WIDTH = Math.round(360 * UI_SCALE);
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 
-if (figma.editorType === 'figma') {
-  // Catch mistakes in templates/*.json as soon as the plugin opens.
-  const templateErrors = checkTemplates();
+// Figma design files get the full plugin; FigJam gets only its own template
+// ("editor": "figjam"), opened straight on the form, and no capture tool.
+if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
+  const editor = figma.editorType;
+  const capture = CAPTURE && editor === 'figma';
+
+  // Only problems with the template set as a whole show on open. A single
+  // template's problems show when Create is clicked for it (see createFile).
+  const templateErrors = checkTemplates(editor);
   if (templateErrors.length) {
-    console.error('templates/ has problems:\n' + templateErrors.join('\n'));
-    figma.notify(`templates/${templateErrors[0]}`, { error: true, timeout: 10000 });
+    console.error(templateErrors.join('\n'));
+    figma.notify(templateErrors[0], { error: true, timeout: 10000 });
   }
 
   figma.showUI(__html__, {
     themeColors: true,
-    title: 'New file',
+    title: editor === 'figjam' ? 'Insert thumbnail' : 'New file',
     width: WIDTH,
     height: 260,
   });
@@ -70,9 +76,10 @@ if (figma.editorType === 'figma') {
         type: 'init',
         contributors,
         // The File type list and each template's form heading, thumbnail title label and fields.
-        templates: templateSummaries(),
+        templates: templateSummaries(editor),
+        editor, // "figjam": the UI skips the File type list and opens the form
         version: DISPLAY_VERSION, // shown next to the File type heading
-        features: { capture: CAPTURE, debug: DEBUG },
+        features: { capture, debug: DEBUG },
         // The UI animates the window height within these bounds.
         window: { min: MIN_HEIGHT, max: MAX_HEIGHT },
       });
@@ -80,7 +87,7 @@ if (figma.editorType === 'figma') {
       return;
     }
 
-    if (msg.type === 'capture-file' && CAPTURE) {
+    if (msg.type === 'capture-file' && capture) {
       try {
         const result = await captureFile();
         console.log(`Captured file as JSON. Warnings (${result.warnings.length}):\n${result.warnings.join('\n')}`);
@@ -131,11 +138,15 @@ if (figma.editorType === 'figma') {
       await sendDebug({ lastSave: saveResult });
 
       try {
-        const { fileName } = await createFile(data);
+        const { fileName, warnings } = await createFile(data);
+        if (warnings.length) {
+          console.warn(`Template warnings:\n${warnings.join('\n')}`);
+          figma.notify(warnings.join(' '), { timeout: 10000 });
+        }
         // The plugin stays open on the "created" screen, which suggests the file name
-        // unless the file already has it.
-        const named = figma.root.name.trim() === fileName;
-        figma.ui.postMessage({ type: 'created', fileName: named ? null : fileName });
+        // only while the file is still "Untitled" (a name someone chose is left alone).
+        const untitled = figma.root.name.trim().toLowerCase() === 'untitled';
+        figma.ui.postMessage({ type: 'created', fileName: untitled ? fileName : null });
       } catch (error) {
         console.error(error);
         return fail(error instanceof Error ? error.message : String(error));

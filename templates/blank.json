@@ -3,16 +3,45 @@
   "templateName": "Blank (thumbnail only)",
   "templateFormHeading": "Blank",
   "thumbnailTitleLabel": "Title",
-  "fields": ["description", "contributors", "externalAccess"],
+  "fields": [
+    "description",
+    "contributors",
+    "externalAccess"
+  ],
+  "requiredFields": [],
   "fileName": "[Title]",
-  "mainDesignPage": "",
+  "mainDesignPage": "💻  Design",
   "pages": [
     {
       "name": "📷  Thumbnail",
-      "background": "#F4F4F4",
+      "background": "#ECECEC",
       "content": [
-        { "component": "", "detach": true }
+        {
+          "frame": "Thumbnail",
+          "x": 0,
+          "y": 0,
+          "width": 1600,
+          "fill": "none",
+          "autoLayout": {
+            "direction": "vertical"
+          },
+          "sizing": {
+            "height": "hug"
+          },
+          "children": [
+            {
+              "component": "6663693af5fd361811926d93dba80f2a1e3a8715"
+            }
+          ]
+        }
       ]
+    },
+    {
+      "name": "-"
+    },
+    {
+      "name": "💻  Design",
+      "background": "#ECECEC"
     }
   ]
 }

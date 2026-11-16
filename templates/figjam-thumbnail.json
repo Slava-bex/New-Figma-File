@@ -1,0 +1,38 @@
+{
+  "editor": "figjam",
+  "order": 0,
+  "templateName": "FigJam thumbnail",
+  "templateFormHeading": "Thumbnail",
+  "thumbnailTitleLabel": "Title",
+  "fields": [
+    "description",
+    "contributors",
+    "externalAccess"
+  ],
+  "requiredFields": [],
+  "fileName": "[Title]",
+  "mainDesignPage": "",
+  "pages": [
+    {
+      "name": "Board",
+      "content": [
+        {
+          "frame": "Thumbnail",
+          "width": 1600,
+          "fill": "none",
+          "autoLayout": {
+            "direction": "vertical"
+          },
+          "sizing": {
+            "height": "hug"
+          },
+          "children": [
+            {
+              "component": "6663693af5fd361811926d93dba80f2a1e3a8715"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

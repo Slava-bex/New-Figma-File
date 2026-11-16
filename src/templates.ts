@@ -10,6 +10,12 @@ import { FORM_FIELDS, type FileType, type FormField } from './types';
 export interface TemplateDef {
   /** File name without .json. */
   id: FileType;
+  /**
+   * Where the template is offered (default "figma"). A "figjam" template doesn't
+   * touch pages: its content is placed on the current board, and the plugin opens
+   * straight on its form.
+   */
+  editor?: TemplateEditor;
   order?: number;
   /** The template's name in the File type list. */
   templateName: string;
@@ -34,6 +40,9 @@ export interface TemplateDef {
   /** Pages to build, in order. */
   pages: PageDef[];
 }
+
+export type TemplateEditor = 'figma' | 'figjam';
+export const editorOf = (template: TemplateDef): TemplateEditor => template.editor ?? 'figma';
 
 /** The file's default page, which a template's main design page takes over. */
 export const DEFAULT_PAGE_NAME = 'Page 1';
@@ -119,22 +128,37 @@ export const isFrame = (item: ContentItem): item is FrameItem => 'frame' in item
 
 // ---- Loaded data ----
 
-/** All templates, in list order. */
+/**
+ * All templates, in list order: by `order`, then alphabetically by name. Several
+ * templates may share an order (e.g. the captured default 0); that's fine.
+ * Templates without an order come last.
+ */
 export const TEMPLATES: TemplateDef[] = [...(loaded.templates as TemplateDef[])].sort(
   (a, b) => (a.order ?? Infinity) - (b.order ?? Infinity) || a.templateName.localeCompare(b.templateName),
 );
 
 export const findTemplate = (id: FileType) => TEMPLATES.find((template) => template.id === id);
 
-/** What the UI needs to show a template. */
-export const templateSummaries = () =>
-  TEMPLATES.map(({ id, templateName, templateFormHeading, thumbnailTitleLabel, fields, requiredFields }) => ({
-    id,
-    templateName,
-    templateFormHeading: templateFormHeading ?? templateName,
-    thumbnailTitleLabel,
-    fields,
-    requiredFields: requiredFields ?? [],
+/** The template's known fields; unknown ones are ignored (see templateWarnings). */
+export const fieldsOf = (template: TemplateDef): FormField[] =>
+  (template.fields ?? []).filter((field) => FORM_FIELDS.includes(field));
+
+/** The template's required fields that it shows and that can be required; others are ignored. */
+export const requiredFieldsOf = (template: TemplateDef): FormField[] =>
+  (template.requiredFields ?? []).filter((field) => field !== 'externalAccess' && fieldsOf(template).includes(field));
+
+/** The templates offered in an editor, in list order. */
+export const templatesFor = (editor: TemplateEditor) => TEMPLATES.filter((template) => editorOf(template) === editor);
+
+/** What the UI needs to show the templates of an editor. */
+export const templateSummaries = (editor: TemplateEditor) =>
+  templatesFor(editor).map((template) => ({
+    id: template.id,
+    templateName: template.templateName,
+    templateFormHeading: template.templateFormHeading ?? template.templateName,
+    thumbnailTitleLabel: template.thumbnailTitleLabel,
+    fields: fieldsOf(template),
+    requiredFields: requiredFieldsOf(template),
   }));
 
 // ---- Checks ----
@@ -143,67 +167,126 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const KINDS = ['component', 'section', 'frame'] as const;
 const KEY = /^[0-9a-f]{40}$/i;
 
+/** Problems with the template set as a whole, checked when the plugin opens. */
+export function checkTemplates(editor: TemplateEditor): string[] {
+  return templatesFor(editor).length === 0
+    ? [`Couldn't show any templates: templates/ has none for ${editor === 'figjam' ? 'FigJam' : 'Figma'}.`]
+    : [];
+}
+
 /**
- * Lists everything wrong with the templates, so a typo in the JSON shows up
- * as a clear message before the document is touched.
+ * Lists what stops a template from being built, checked when Create is clicked
+ * for that template, before the document is touched. Problems that don't stop
+ * it are in templateWarnings instead.
  */
-export function checkTemplates(): string[] {
+export function checkTemplate(template: TemplateDef): string[] {
   const errors: string[] = [];
-  const err = (where: string, message: string) => errors.push(`${where}: ${message}`);
+  const file = `templates/${template.id}.json`;
+  // Every message: what couldn't be done, why, and in which template file.
+  const err = (what: string, why: string) => errors.push(`${what}: ${why}. (${file})`);
+
+  /** How an item is called in messages, e.g. `frame "Thumbnail"`. */
+  const describe = (item: ContentItem) =>
+    isSection(item) ? `section "${item.name ?? item.section}"`
+    : isFrame(item) ? `frame "${item.name ?? item.frame}"`
+    : item.name ? `component "${item.name}"` : 'a component';
 
   const checkItems = (items: ContentItem[] | undefined, where: string, insideFrame: boolean, insideAutoLayout = false) => {
-    (items ?? []).forEach((item, i) => {
-      const at = `${where}[${i}]`;
+    for (const item of items ?? []) {
       const kinds = KINDS.filter((kind) => kind in item);
       if (kinds.length !== 1) {
-        err(at, `needs exactly one of ${KINDS.join(', ')}`);
-        return;
+        err(`Couldn't add an item to ${where}`, `an item needs exactly one of ${KINDS.join(', ')}`);
+        continue;
       }
+      const name = describe(item);
       if (isComponent(item)) {
-        if (!item.component) err(at, 'component key is empty');
-        else if (!KEY.test(item.component)) err(at, `"${item.component}" isn't a component key`);
+        if (!item.component) err(`Couldn't place ${name} in ${where}`, 'its component key is empty');
+        else if (!KEY.test(item.component)) err(`Couldn't place ${name} in ${where}`, `"${item.component}" isn't a valid component key`);
       }
-      if (isSection(item) && insideFrame) err(at, 'Figma sections can only sit on a page or in another section');
+      if (isSection(item) && insideFrame) {
+        err(`Couldn't create ${name} in ${where}`, 'Figma sections can only sit on a page or in another section, not in a frame');
+      }
       if ((isSection(item) || isFrame(item)) && item.fill && item.fill !== 'none' && !HEX.test(item.fill)) {
-        err(at, `fill "${item.fill}" isn't a #RRGGBB color or "none"`);
+        err(`Couldn't set the fill of ${name} in ${where}`, `"${item.fill}" isn't a #RRGGBB color or "none"`);
       }
       const fills = [item.sizing?.width, item.sizing?.height].includes('fill');
-      if (fills && !insideAutoLayout) err(at, '"fill" sizing only works inside an auto-layout frame');
-      if (item.absolute && !insideAutoLayout) err(at, '"absolute" only works inside an auto-layout frame');
+      if (fills && !insideAutoLayout) err(`Couldn't size ${name} in ${where} to fill`, '"fill" only works inside an auto-layout frame');
+      if (item.absolute && !insideAutoLayout) err(`Couldn't position ${name} in ${where} absolutely`, '"absolute" only works inside an auto-layout frame');
       if (isFrame(item) && item.autoLayout && !['horizontal', 'vertical'].includes(item.autoLayout.direction)) {
-        err(at, 'autoLayout.direction must be "horizontal" or "vertical"');
+        err(`Couldn't set auto layout on ${name} in ${where}`, 'its direction must be "horizontal" or "vertical"');
       }
       if (isSection(item) || isFrame(item)) {
-        checkItems(item.children, `${at}.children`, insideFrame || isFrame(item), isFrame(item) && !!item.autoLayout);
+        checkItems(item.children, `${where} › ${name}`, insideFrame || isFrame(item), isFrame(item) && !!item.autoLayout);
       }
-    });
+    }
   };
 
-  if (TEMPLATES.length === 0) err('templates/', 'no templates found');
-  for (const template of TEMPLATES) {
-    const file = `${template.id}.json`;
-    if (!template.templateName?.trim()) err(file, 'templateName is empty');
-    if (!template.thumbnailTitleLabel?.trim()) err(file, 'thumbnailTitleLabel is empty');
-    for (const field of template.fields ?? []) {
-      if (!FORM_FIELDS.includes(field)) err(file, `unknown field "${field}" (known: ${FORM_FIELDS.join(', ')})`);
-    }
-    for (const field of template.requiredFields ?? []) {
-      if (field === 'externalAccess') err(file, 'requiredFields: externalAccess is a switch and can\'t be required');
-      else if (!(template.fields ?? []).includes(field)) err(file, `requiredFields: "${field}" isn't in fields`);
-    }
-    for (const placeholder of unknownPlaceholders(template.fileName ?? '', template)) {
-      err(file, `fileName: unknown placeholder ${placeholder} (known: ${placeholdersOf(template).join(', ')})`);
-    }
-    if (!Array.isArray(template.pages) || template.pages.length === 0) err(file, 'pages is empty');
-    if (template.mainDesignPage && !(template.pages ?? []).some((page) => page.name === template.mainDesignPage)) {
-      err(file, `mainDesignPage "${template.mainDesignPage}" isn't one of its pages`);
-    }
-    (template.pages ?? []).forEach((page, i) => {
-      const where = `${file} pages[${i}]`;
-      if (!page.name?.trim()) err(where, 'name is empty');
-      if (page.background && !HEX.test(page.background)) err(where, `background "${page.background}" isn't a #RRGGBB color`);
-      checkItems(page.content, `${where}.content`, false);
-    });
+  if (template.editor !== undefined && !['figma', 'figjam'].includes(template.editor)) {
+    err("Couldn't tell where the template is used", `editor must be "figma" or "figjam", not "${template.editor}"`);
   }
+  if (!template.thumbnailTitleLabel?.trim()) err("Couldn't set up the name field", 'thumbnailTitleLabel is empty');
+  if (!Array.isArray(template.pages) || template.pages.length === 0) err("Couldn't create any pages", 'the template has no pages');
+  (template.pages ?? []).forEach((page, i) => {
+    if (!page.name?.trim()) {
+      err(`Couldn't create page ${i + 1}`, 'its name is empty');
+      return;
+    }
+    const where = `page "${page.name}"`;
+    if (page.background && !HEX.test(page.background)) {
+      err(`Couldn't set the background of ${where}`, `"${page.background}" isn't a #RRGGBB color`);
+    }
+    checkItems(page.content, where, false);
+  });
   return errors;
+}
+
+/**
+ * Problems in a template that don't stop it from being built; they're ignored
+ * and shown after creating the file.
+ */
+export function templateWarnings(template: TemplateDef): string[] {
+  const warnings: string[] = [];
+  const file = `templates/${template.id}.json`;
+  // Every message: what couldn't be done, why, what happened instead, and in which template file.
+  const warn = (what: string, why: string, instead: string) => warnings.push(`${what}: ${why}. ${instead}. (${file})`);
+
+  if (!template.templateName?.trim()) {
+    warn("Couldn't name the template in the File type list", 'templateName is empty', 'It shows without a name');
+  }
+  for (const field of template.fields ?? []) {
+    if (!FORM_FIELDS.includes(field)) {
+      warn(`Couldn't show the field "${field}"`, `it isn't a known field (known: ${FORM_FIELDS.join(', ')})`, 'It was left out');
+    }
+  }
+  for (const field of template.requiredFields ?? []) {
+    if (field === 'externalAccess') {
+      warn("Couldn't make externalAccess required", "it's a switch, so it always has a value", 'It stays optional');
+    } else if (!(template.fields ?? []).includes(field)) {
+      warn(`Couldn't make "${field}" required`, "it isn't in the template's fields", 'It was ignored');
+    }
+  }
+  for (const placeholder of unknownPlaceholders(template.fileName ?? '', template)) {
+    warn(
+      `Couldn't fill ${placeholder} in the suggested file name`,
+      `it isn't a known placeholder (known: ${placeholdersOf(template).join(', ')})`,
+      'It was kept as text',
+    );
+  }
+  for (const page of template.pages ?? []) {
+    for (const placeholder of unknownPlaceholders(page.name ?? '', template)) {
+      warn(
+        `Couldn't fill ${placeholder} in page "${page.name}"`,
+        `it isn't a known placeholder (known: ${placeholdersOf(template).join(', ')})`,
+        'It was kept as text',
+      );
+    }
+  }
+  if (template.mainDesignPage && !(template.pages ?? []).some((page) => page.name === template.mainDesignPage)) {
+    warn(
+      "Couldn't set the main design page",
+      `"${template.mainDesignPage}" isn't one of the template's pages`,
+      `"${DEFAULT_PAGE_NAME}" was left as it is`,
+    );
+  }
+  return warnings;
 }

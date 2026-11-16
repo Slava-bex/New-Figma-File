@@ -56,19 +56,15 @@ export async function placeComponent(ctx: CreateContext, componentKey: string, p
 
 // ---- Finding layers ----
 
-/** Finds a layer by name (and optionally type) inside `root`, or throws a clear error. */
-export function layer<T extends SceneNode['type']>(
-  root: ChildrenMixin,
-  name: string,
-  type?: T,
-): Extract<SceneNode, { type: T }> {
-  const node = root.findOne((n) => n.name === name && (!type || n.type === type));
-  if (!node) throw new Error(`Component is missing the layer "${name}"`);
-  return node as Extract<SceneNode, { type: T }>;
+/**
+ * Finds a text layer in `instance` by its id inside the main component
+ * (see src/library.ts), or throws a clear error.
+ */
+export function textLayerById(instance: InstanceNode, layerId: string): TextNode {
+  const node = instance.findOne((n) => n.type === 'TEXT' && n.id.split(';').pop() === layerId);
+  if (!node) throw new Error(`Couldn't fill "${instance.name}": missing text layer ${layerId}`);
+  return node as TextNode;
 }
-
-export const textLayer = (root: ChildrenMixin, name: string) => layer(root, name, 'TEXT');
-export const instanceLayer = (root: ChildrenMixin, name: string) => layer(root, name, 'INSTANCE');
 
 // ---- Filling layers ----
 
@@ -88,15 +84,15 @@ export function setLink(node: TextNode, url: string) {
 }
 
 /**
- * Sets component properties by their display name, e.g. { Title: 'Foo' },
- * without the "#123:4" id suffix Figma adds to non-variant properties.
+ * Sets component properties by their id, e.g. { '829:1': 'Foo' } for "Title#829:1",
+ * so renaming a property doesn't matter. Variant properties have no id and go by name.
  */
 export function setProperties(instance: InstanceNode, values: Record<string, string | boolean>) {
   const keys = Object.keys(instance.componentProperties);
   const resolved: Record<string, string | boolean> = {};
-  for (const [name, value] of Object.entries(values)) {
-    const key = keys.find((k) => k === name || k.startsWith(`${name}#`));
-    if (!key) throw new Error(`Component "${instance.name}" has no property "${name}"`);
+  for (const [id, value] of Object.entries(values)) {
+    const key = keys.find((k) => k === id || k.endsWith(`#${id}`));
+    if (!key) throw new Error(`Couldn't fill "${instance.name}": missing property "${id}"`);
     resolved[key] = value;
   }
   instance.setProperties(resolved);

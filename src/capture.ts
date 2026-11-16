@@ -4,18 +4,50 @@
 //
 // What's captured: pages (name, background), and on them sections, frames and
 // library component instances, with names, positions, sizes, fills and auto
-// layout. Instances that contain the thumbnail cover (e.g. "Start") are marked
-// "detach", so the frame around the cover is a regular frame and can become
+// layout. Instances that contain the thumbnail (a template's cover) are marked
+// "detach", so the frame around the thumbnail is a regular frame and can become
 // the file thumbnail. Anything else (text, shapes, groups, instance
 // overrides, …) is skipped and listed as a warning.
 
-import { FILLED_COMPONENTS, THUMBNAIL_COVER } from './create/fillers';
-import type { AutoLayout, ContentItem, PageDef, Sizing } from './templates';
+import { containsInstanceOf, FILLED_COMPONENTS, isInstanceOf, THUMBNAIL } from './library';
+import { placeholdersOf, unknownPlaceholders } from './placeholders';
+import { type AutoLayout, type ContentItem, type PageDef, type Sizing, type TemplateDef } from './templates';
 import { FORM_FIELDS } from './types';
+
+// Used when the template file doesn't say otherwise.
+const DEFAULT_TITLE_LABEL = 'Name';
+const DEFAULT_TEMPLATE_NAME = 'New file';
+
+// Main design page names, ignoring case and any emoji or spaces in front:
+// "Design", or "Concept" optionally followed by ": anything".
+const MAIN_DESIGN_PAGE = [/^[^\p{L}\p{N}]*design\s*$/iu, /^[^\p{L}\p{N}]*concept\s*(:.*)?$/iu];
+
+/**
+ * The first page after the first divider, if it's called "Design" or "Concept"
+ * (see MAIN_DESIGN_PAGE); otherwise "" (no main design page).
+ */
+function guessMainDesignPage(pages: readonly PageNode[]): string {
+  const divider = pages.findIndex((page) => page.isPageDivider);
+  if (divider < 0) return '';
+  const page = pages.slice(divider + 1).find((p) => !p.isPageDivider);
+  return page && MAIN_DESIGN_PAGE.some((pattern) => pattern.test(page.name.trim())) ? page.name : '';
+}
+
+/** A boolean property's value on an instance, by the property's id; undefined if it has none. */
+function booleanProperty(instance: InstanceNode, id: string): boolean | undefined {
+  const entry = Object.entries(instance.componentProperties).find(([key]) => key.endsWith(`#${id}`));
+  return typeof entry?.[1].value === 'boolean' ? entry[1].value : undefined;
+}
+
+/** A text property's value on an instance, by the property's id (see src/library.ts). */
+function textProperty(instance: InstanceNode, id: string): string {
+  const entry = Object.entries(instance.componentProperties).find(([key]) => key.endsWith(`#${id}`));
+  return typeof entry?.[1].value === 'string' ? entry[1].value.trim() : '';
+}
 
 export interface CaptureResult {
   json: string;
-  /** Suggested JSON file name in templates/, from the Figma file's name. */
+  /** Suggested JSON file name in templates/, from the template's name. */
   saveAs: string;
   warnings: string[];
   pages: number;
@@ -107,11 +139,13 @@ export async function captureFile(): Promise<CaptureResult> {
         warnings.push(`${where}: "${main.name}" is a local component. Publish it in a library, or the plugin can't place it`);
       }
       // Filled components get the form data anyway, so their overrides don't matter.
-      if (!FILLED_COMPONENTS.includes(node.name) && node.overrides.length > 0) {
+      let filled = false;
+      for (const component of FILLED_COMPONENTS) filled ||= await isInstanceOf(node, component);
+      if (!filled && node.overrides.length > 0) {
         warnings.push(`${where}: changes made to this instance (overrides) aren't captured`);
       }
-      // The frame around the cover must be a regular frame to become the file thumbnail.
-      const detach = node.findOne((n) => n.type === 'INSTANCE' && n.name === THUMBNAIL_COVER) !== null;
+      // The frame around the thumbnail must be a regular frame to become the file thumbnail.
+      const detach = await containsInstanceOf(node, THUMBNAIL);
       const name = node.name !== main.name ? node.name : undefined;
       items++;
       return { component: main.key, ...(detach && { detach }), ...(name && { name }), ...position, ...layout };
@@ -143,14 +177,27 @@ export async function captureFile(): Promise<CaptureResult> {
   }
 
   const pages: PageDef[] = [];
+  let thumbnail: InstanceNode | null = null;
   for (const page of figma.root.children) {
     await page.loadAsync();
+    // The first thumbnail in the file gives the form's name label and the template's name.
+    if (!thumbnail) {
+      for (const node of page.findAllWithCriteria({ types: ['INSTANCE'] })) {
+        if (await isInstanceOf(node, THUMBNAIL)) {
+          thumbnail = node;
+          break;
+        }
+      }
+    }
     const content: ContentItem[] = [];
     for (const node of page.children) {
       const item = await captureNode(node, page.name);
       if (item) content.push(item);
     }
-    const background = page.backgrounds.find((paint): paint is SolidPaint => paint.type === 'SOLID');
+    // Divider pages can't show content, so their background is meaningless.
+    const background = page.isPageDivider
+      ? undefined
+      : page.backgrounds.find((paint): paint is SolidPaint => paint.type === 'SOLID');
     pages.push({
       name: page.name,
       ...(background && { background: hex(background.color) }),
@@ -158,18 +205,47 @@ export async function captureFile(): Promise<CaptureResult> {
     });
   }
 
-  // A complete template file; the form details above pages are adjusted by hand after capturing.
-  const template = {
-    templateName: figma.root.name,
-    thumbnailTitleLabel: 'Name',
-    fields: [...FORM_FIELDS],
-    fileName: '[Name]',
-    mainDesignPage: '',
+  // The thumbnail's title is the name field's label (e.g. "Feature name").
+  // Its description is never used: it's optional, and hidden it still holds default text.
+  const title = thumbnail ? textProperty(thumbnail, THUMBNAIL.properties.title) : '';
+  if (!thumbnail) warnings.push(`No thumbnail found, so the name label uses the default`);
+  const thumbnailTitleLabel = title || DEFAULT_TITLE_LABEL;
+  // Nothing in the file names the template; set it by hand after capturing.
+  const templateName = DEFAULT_TEMPLATE_NAME;
+
+  // The Figma file's name is the suggested file name pattern, e.g. "[Product] - [Feature name]".
+  const pattern = figma.root.name.trim();
+  const usesPlaceholders = /\[[^\]]+\]/.test(pattern);
+  const fileName = usesPlaceholders ? pattern : `[${thumbnailTitleLabel}]`;
+  if (!usesPlaceholders) {
+    warnings.push(`The file name "${pattern}" has no [placeholders], so the suggested file name is ${fileName}`);
+  }
+  for (const placeholder of unknownPlaceholders(fileName, { thumbnailTitleLabel })) {
+    warnings.push(
+      `File name: ${placeholder} isn't a known placeholder (known: ${placeholdersOf({ thumbnailTitleLabel }).join(', ')})`,
+    );
+  }
+
+  const mainDesignPage = guessMainDesignPage(figma.root.children);
+  // Without a thumbnail there's nothing to go by, so the field stays.
+  const showsContributors = !thumbnail || booleanProperty(thumbnail, THUMBNAIL.properties.showContributors) !== false;
+
+  // A complete template file, every setting included; adjust the form details by hand after capturing.
+  const template: Omit<TemplateDef, 'id'> = {
+    order: 0, // templates with the same order are listed alphabetically
+    templateName,
+    templateFormHeading: templateName,
+    thumbnailTitleLabel,
+    // Contributors only when the template's thumbnail shows them.
+    fields: FORM_FIELDS.filter((field) => field !== 'contributors' || showsContributors),
+    requiredFields: [],
+    fileName,
+    mainDesignPage,
     pages,
   };
   return {
     json: JSON.stringify(template, null, 2),
-    saveAs: `${slug(figma.root.name)}.json`,
+    saveAs: `${slug(templateName)}.json`,
     warnings,
     pages: pages.length,
     items,

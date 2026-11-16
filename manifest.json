@@ -9,9 +9,7 @@
   "documentAccess": "dynamic-page",
   "editorType": [
     "figma",
-    "figjam",
-    "slides",
-    "buzz"
+    "figjam"
   ],
   "ui": "dist/ui.html",
   "networkAccess": {

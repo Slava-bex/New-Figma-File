@@ -40,8 +40,25 @@ const SEPARATOR = '[-–—|·/:]';
 const EDGES = new RegExp(`^(?:\\s|${SEPARATOR})+|(?:\\s|${SEPARATOR})+$`, 'g');
 const REPEATED = new RegExp(`\\s*(${SEPARATOR})(?:\\s*${SEPARATOR})+\\s*`, 'g');
 
+/** Fills the placeholders and removes the separators an empty one leaves behind. */
+const fillAndTidy = (text: string, template: TemplateDef, data: NewFileData) =>
+  interpolate(text, template, data).replace(REPEATED, ' $1 ').replace(EDGES, '');
+
 /** The suggested file name: the template's fileName with placeholders filled and empty parts removed. */
 export function fileNameFor(template: TemplateDef, data: NewFileData) {
   const pattern = template.fileName || `[${template.thumbnailTitleLabel}]`;
-  return interpolate(pattern, template, data).replace(REPEATED, ' $1 ').replace(EDGES, '').replace(/\s+/g, ' ') || data.name;
+  return fillAndTidy(pattern, template, data).replace(/\s+/g, ' ') || data.name;
+}
+
+const HAS_PLACEHOLDER = /\[[^\]]+\]/;
+
+/**
+ * A page or layer name with its placeholders filled, e.g. "🚧  CONCEPT: [Project name]".
+ * Names without placeholders stay exactly as they are (so dividers like "---" are
+ * kept); with them, an empty placeholder's separator is removed. Spacing, like the
+ * double space after an emoji, is kept.
+ */
+export function nameFor(text: string, template: TemplateDef, data: NewFileData) {
+  if (!HAS_PLACEHOLDER.test(text)) return text;
+  return fillAndTidy(text, template, data) || interpolate(text, template, data);
 }
