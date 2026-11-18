@@ -241,6 +241,32 @@
     html { overflow: hidden; }
     html.scrollable { overflow-y: auto; }
 
+    /* The form's Create button: where it belongs when the form fits; stuck to the
+       bottom of the window when the form is taller, with the content above fading
+       out while there's more of it below (html.at-bottom is set by the script).
+       It reaches to the step's edges, so it looks the same stuck or not. */
+    .sticky-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+      margin: 0 calc(-1 * var(--spacer-4)) calc(-1 * var(--spacer-4));
+      padding: 0 var(--spacer-4) var(--spacer-4);
+      background: var(--figma-color-bg);
+    }
+    .sticky-actions::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 100%;
+      height: var(--spacer-5, 32px);
+      background: linear-gradient(to bottom, transparent, var(--figma-color-bg));
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity var(--motion-fast) ease-out;
+    }
+    html.scrollable:not(.at-bottom) .sticky-actions::before { opacity: 1; }
+
     /* Component states: hover / focus / checked fade instead of snapping.
        (The switch is excluded: figui3 already animates its knob.) */
     fig-button,
@@ -414,7 +440,8 @@
       </div>
       <!-- One row per template in templates/ (filled from the init message). -->
       <fig-stack direction="vertical" gap="1" class="type-list" id="type-list" full></fig-stack>
-      <p class="hint">
+      <!-- Hidden until FILE_TYPES_URL has a real destination; remove `hidden` to show it. -->
+      <p class="hint" id="file-types-hint" hidden>
         Read more about
         <a id="file-types-link" href="#">
           Figma File types at Bex
@@ -516,7 +543,10 @@
         <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
       </fig-stack>
 
-      <fig-button id="create" size="large" full>Create file structure</fig-button>
+      <!-- Stays at the bottom of the window when the form is taller than it (see .sticky-actions). -->
+      <div class="sticky-actions">
+        <fig-button id="create" size="large" full>Create file structure</fig-button>
+      </div>
     </section>
 
     <!-- Step 3: shown after the file was built. Plugins can't rename the file, so the user copies the name. -->
@@ -890,10 +920,20 @@
       post({ type: 'resize', height });
     }
 
+    // Whether the window is scrolled all the way down: then the content above the
+    // sticky Create button no longer fades (see .sticky-actions).
+    function updateScrollEnd() {
+      root.classList.toggle('at-bottom', root.scrollTop + root.clientHeight >= root.scrollHeight - 1);
+    }
+    window.addEventListener('scroll', updateScrollEnd, { passive: true });
+
     function fitWindow() {
       const content = Math.ceil(app.getBoundingClientRect().height);
       const target = Math.min(WINDOW.max, Math.max(WINDOW.min, content));
-      const settle = () => root.classList.toggle('scrollable', content > target);
+      const settle = () => {
+        root.classList.toggle('scrollable', content > target);
+        updateScrollEnd();
+      };
       cancelAnimationFrame(resizeFrame);
 
       // While a section animates its height, the content is already easing:
@@ -901,6 +941,7 @@
       // the content is taller than the window can get anyway (avoids width flicker).
       if (sectionAnimations.size) {
         root.classList.toggle('scrollable', content > WINDOW.max);
+        updateScrollEnd();
         return setWindowHeight(target);
       }
 

@@ -46,6 +46,20 @@ const WIDTH = Math.round(360 * UI_SCALE);
 // The window follows the content height, within these bounds (content scrolls beyond the max).
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
+const INITIAL_HEIGHT = 260;
+
+/** The plugin window's distance from the top of the canvas area, in screen pixels. */
+const TOP_OFFSET = 120;
+
+/**
+ * Where the plugin window opens: centered horizontally on the visible canvas,
+ * TOP_OFFSET below its top edge. Its top-left corner, in canvas coordinates
+ * (screen pixels are divided by the zoom).
+ */
+function launchPosition() {
+  const { center, bounds, zoom } = figma.viewport;
+  return { x: Math.round(center.x - WIDTH / 2 / zoom), y: Math.round(bounds.y + TOP_OFFSET / zoom) };
+}
 
 // Figma design files get the full plugin; FigJam gets only its own template
 // ("editor": "figjam"), opened straight on the form, and no capture tool.
@@ -65,7 +79,8 @@ if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
     themeColors: true,
     title: editor === 'figjam' ? 'Insert thumbnail' : 'New file',
     width: WIDTH,
-    height: 260,
+    height: INITIAL_HEIGHT,
+    position: launchPosition(),
   });
 
   figma.ui.onmessage = async (msg: UIMessage) => {

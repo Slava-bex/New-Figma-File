@@ -122,6 +122,42 @@ export interface FrameItem extends Container {
 
 export type ContentItem = ComponentItem | SectionItem | FrameItem;
 
+// ---- Page structure: dividers and subpages ----
+
+/**
+ * A subpage: its name starts with 2 or more spaces, e.g. "    Old notes". It belongs
+ * to the nearest page above it that isn't a subpage or divider (its parent). More
+ * spaces nest deeper, but all subpages under a parent stay one group.
+ */
+export const isSubpageName = (name: string) => /^\s{2,}/.test(name);
+
+/** The leading spaces of a page name (a subpage's indent). */
+export const indentOf = (name: string) => name.match(/^\s*/)?.[0] ?? '';
+
+/**
+ * Whether a template page name makes a divider (only dashes and spaces, e.g. "---").
+ * Pages in the file are checked with Figma's own isPageDivider instead.
+ */
+export const isDividerName = (name: string) => /^[\s\-–—]*[-–—][\s\-–—]*$/.test(name);
+
+/**
+ * For each template page, the index of its parent page, or null for a top-level
+ * page. A group ends at the next top-level page or divider; a subpage without a
+ * page above it in its group counts as a top-level page (see templateWarnings).
+ */
+export function templateParents(pages: PageDef[]): (number | null)[] {
+  let parent: number | null = null;
+  return pages.map((page, index) => {
+    if (isDividerName(page.name ?? '')) {
+      parent = null;
+      return null;
+    }
+    if (isSubpageName(page.name ?? '') && parent !== null) return parent;
+    if (!isSubpageName(page.name ?? '')) parent = index;
+    return null;
+  });
+}
+
 export const isComponent = (item: ContentItem): item is ComponentItem => 'component' in item;
 export const isSection = (item: ContentItem): item is SectionItem => 'section' in item;
 export const isFrame = (item: ContentItem): item is FrameItem => 'frame' in item;
@@ -281,6 +317,16 @@ export function templateWarnings(template: TemplateDef): string[] {
       );
     }
   }
+  const parents = templateParents(template.pages ?? []);
+  (template.pages ?? []).forEach((page, index) => {
+    if (isSubpageName(page.name ?? '') && parents[index] === null) {
+      warn(
+        `Couldn't make "${page.name.trimStart()}" a subpage`,
+        'there is no page above it in its group (it comes first or right after a divider)',
+        'It was created as a normal page',
+      );
+    }
+  });
   if (template.mainDesignPage && !(template.pages ?? []).some((page) => page.name === template.mainDesignPage)) {
     warn(
       "Couldn't set the main design page",

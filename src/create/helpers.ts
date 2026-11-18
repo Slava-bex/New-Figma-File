@@ -111,7 +111,7 @@ async function loadFontsOf(node: InstanceNode) {
   for (const text of node.findAllWithCriteria({ types: ['TEXT'] })) {
     const used = text.characters.length > 0 ? text.getRangeAllFontNames(0, text.characters.length) : [text.fontName];
     for (const font of used) {
-      if (font === figma.mixed) continue;
+      if (typeof font === 'symbol') continue; // figma.mixed
       const key = `${font.family}|${font.style}`;
       if (!loadedFonts.has(key)) fonts.set(key, font);
     }
