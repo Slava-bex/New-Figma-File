@@ -6,7 +6,7 @@
 // Components, properties and layers are found by id (see src/library.ts).
 
 import { findInstances, PRODUCT, THUMBNAIL } from '../../library';
-import { hide, setProperties, variantOptions } from '../helpers';
+import { hasProperty, hide, setProperties, variantOptions } from '../helpers';
 import type { Filler } from '.';
 
 export const fillThumbnail: Filler = async (root, data) => {
@@ -15,19 +15,25 @@ export const fillThumbnail: Filler = async (root, data) => {
 
   const { title, description, showDescription, accessibleExternally, showContributors, contributors } =
     THUMBNAIL.properties;
-  const contributorNames = data.contributors?.trim() ?? '';
-  // Description, only for templates whose form asks for it (otherwise data.description
-  // is undefined and the thumbnail's description is left exactly as the template has it):
-  // filled in → shown with that text; empty → hidden, its text left as it is.
+  // Description and contributors, only for templates whose form asks for them
+  // (otherwise the value is undefined and the thumbnail's own stays exactly as the
+  // template has it): filled in → shown with that text; empty → hidden, text left as it is.
   const descriptionText = data.description?.trim() ?? '';
   const asksDescription = data.description !== undefined;
-  await setProperties(thumbnail, {
-    [title]: data.name,
+  const contributorNames = data.contributors?.trim() ?? '';
+  const asksContributors = data.contributors !== undefined;
+  const optional = {
     ...(asksDescription && { [showDescription]: Boolean(descriptionText) }),
     ...(descriptionText && { [description]: descriptionText }),
     [accessibleExternally]: data.externallyAccessible,
-    [showContributors]: Boolean(contributorNames),
+    ...(asksContributors && { [showContributors]: Boolean(contributorNames) }),
     ...(contributorNames && { [contributors]: contributorNames }),
+  };
+  // Only the title is required. Properties the component no longer has are left out:
+  // the form disables their fields (see missingThumbnailFields).
+  await setProperties(thumbnail, {
+    [title]: data.name,
+    ...Object.fromEntries(Object.entries(optional).filter(([id]) => hasProperty(thumbnail, id))),
   });
 
   const [product] = await findInstances(thumbnail, PRODUCT);

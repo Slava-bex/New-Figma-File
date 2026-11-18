@@ -63,6 +63,77 @@ export const GITHUB_LINK = {
 /** Components whose overrides come from the form, so capture doesn't warn about them. */
 export const FILLED_COMPONENTS: LibraryComponent[] = [THUMBNAIL, PRODUCT, GITHUB_LINK];
 
+// ---- Loading from the library ----
+
+/** How long loading a library component may take before giving up (e.g. offline). */
+const LIBRARY_TIMEOUT = 15_000;
+
+/** `promise`, or an error if it takes longer than LIBRARY_TIMEOUT, so a stuck library load never hangs the plugin. */
+export function withLibraryTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Loading from the library timed out')), LIBRARY_TIMEOUT);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+// ---- What the thumbnail can show ----
+
+/** Form fields filled into thumbnail properties, and the properties each needs. */
+const THUMBNAIL_FIELD_PROPERTIES = {
+  description: [THUMBNAIL.properties.description, THUMBNAIL.properties.showDescription],
+  contributors: [THUMBNAIL.properties.contributors, THUMBNAIL.properties.showContributors],
+  externalAccess: [THUMBNAIL.properties.accessibleExternally],
+} as const;
+
+/** Form fields the thumbnail fills: its properties, and the product pill inside it. */
+export type ThumbnailField = keyof typeof THUMBNAIL_FIELD_PROPERTIES | 'products';
+
+/**
+ * The form fields the published thumbnail component can't show, so the form
+ * disables them: fields whose properties it doesn't have (e.g. after Contributors
+ * was removed from it in the library), and products when it has no product pill.
+ * null when the component can't be loaded from the library at all (no access,
+ * offline, timed out): then the plugin can't create anything (see availability.ts).
+ */
+export async function missingThumbnailFields(): Promise<ThumbnailField[] | null> {
+  let thumbnail: ComponentNode;
+  let definitions: ComponentPropertyDefinitions;
+  try {
+    thumbnail = await withLibraryTimeout(figma.importComponentByKeyAsync(THUMBNAIL.key));
+    definitions = thumbnail.componentPropertyDefinitions;
+  } catch {
+    try {
+      const set = await withLibraryTimeout(figma.importComponentSetByKeyAsync(THUMBNAIL.key));
+      thumbnail = set.defaultVariant;
+      definitions = set.componentPropertyDefinitions;
+    } catch {
+      return null;
+    }
+  }
+  const keys = Object.keys(definitions);
+  const has = (id: string) => keys.some((key) => key === id || key.endsWith(`#${id}`));
+  const missing: ThumbnailField[] = (Object.keys(THUMBNAIL_FIELD_PROPERTIES) as (keyof typeof THUMBNAIL_FIELD_PROPERTIES)[])
+    .filter((field) => !THUMBNAIL_FIELD_PROPERTIES[field].every(has));
+  if ((await findInstances(thumbnail, PRODUCT)).length === 0) missing.push('products');
+  return missing;
+}
+
+/** Whether a GitHub link (a Project Link set to Source=GitHub) is in `root`, which the link filler fills. */
+export async function hasGithubLink(root: SceneNode): Promise<boolean> {
+  return (await findInstances(root, GITHUB_LINK)).some(
+    (link) => link.componentProperties[GITHUB_LINK.properties.source]?.value === 'GitHub',
+  );
+}
+
 // ---- Finding instances ----
 
 /** The key that identifies an instance's component: its component set's key if it has one. */

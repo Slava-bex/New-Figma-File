@@ -159,6 +159,33 @@
       visibility: visible;
       transition: opacity var(--motion-fast) ease-out 150ms, visibility 0s linear 150ms;
     }
+    /* A form field the thumbnail can't show: dimmed (figui3 disables its control),
+       with the reason as a tooltip below it on hover (see applyUnavailable). */
+    .unavailable { position: relative; }
+    .unavailable .section-label { opacity: 0.5; }
+    .unavailable::after {
+      content: attr(data-disabled-reason);
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 10;
+      padding: var(--spacer-1) var(--spacer-2);
+      border-radius: var(--radius-medium, 6px);
+      background: var(--figma-color-bg-tooltip, #1E1E1E);
+      color: var(--figma-color-text-tooltip, #FFF);
+      font-size: 11px;
+      line-height: 16px;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity var(--motion-fast) ease-out, visibility 0s linear var(--motion-fast);
+    }
+    .unavailable:hover::after {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity var(--motion-fast) ease-out 150ms, visibility 0s linear 150ms;
+    }
     .hint a {
       display: inline-flex;
       align-items: center;
@@ -192,6 +219,12 @@
     .message-done.success {
       background: var(--figma-color-bg-success-tertiary, #EEF7F2);
       color: var(--figma-color-text-success, #14AE5C);
+    }
+    /* The form's "can't reach the library" message (red), above the Create button. */
+    .message-done.error {
+      margin-bottom: var(--spacer-3);
+      background: var(--figma-color-bg-danger-tertiary, #FFE2E0);
+      color: var(--figma-color-text-danger, #DC3412);
     }
     /* FigJam's thumbnail reminder: neutral instead of green. */
     .message-done.info {
@@ -545,6 +578,15 @@
 
       <!-- Stays at the bottom of the window when the form is taller than it (see .sticky-actions). -->
       <div class="sticky-actions">
+        <!-- Shown when the plugin can't load the library's thumbnail (see 'library-unavailable'). -->
+        <p class="message-done error" id="library-error" role="alert" hidden>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor"/>
+            <path d="M8 4.5V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="8" cy="11.25" r="0.9" fill="currentColor"/>
+          </svg>
+          <span>Can't reach the Figma library with the thumbnail component. Check that the library is enabled for this file and that you're online, then reopen the plugin.</span>
+        </p>
         <fig-button id="create" size="large" full>Create file structure</fig-button>
       </div>
     </section>
@@ -671,6 +713,7 @@
       for (const section of sections) {
         section.hidden = !FILE_TYPES[type].fields.includes(section.dataset.field);
       }
+      applyUnavailable(type);
       applyRequired(FILE_TYPES[type].requiredFields);
       // Messages mention the field label, which depends on the template.
       for (const id of Object.keys(FIELDS)) refresh(id);
@@ -831,15 +874,44 @@
     const productGroup = $('#product-group');
     let productsRequired = false;
 
+    // ---- Fields a template can't fill ----
+    // The plugin reports, per template, fields whose part is missing from the library
+    // components: a thumbnail property, the product pill, or a GitHub link in the
+    // template's own components. They stay visible but are disabled, with the reason
+    // as a tooltip, and are never required or sent. Set for the open template.
+    const UNAVAILABLE_REASON = "Field included in the template, but its target layer wasn't found.";
+    let unavailableByTemplate = {};
+    const unavailable = new Set();
+    const isUnavailableInput = (id) =>
+      Object.entries(TEXT_FIELD_INPUTS).some(([field, input]) => input === id && unavailable.has(field));
+
+    function applyUnavailable(type) {
+      unavailable.clear();
+      for (const field of unavailableByTemplate[type] ?? []) unavailable.add(field);
+      for (const section of sections) {
+        const off = unavailable.has(section.dataset.field);
+        section.classList.toggle('unavailable', off);
+        if (off) section.dataset.disabledReason = UNAVAILABLE_REASON;
+        else delete section.dataset.disabledReason;
+        for (const control of section.querySelectorAll('fig-input-text, fig-switch, fig-checkbox, button')) {
+          // Only controls disabled here are enabled again.
+          if (off) control.setAttribute('data-unavailable', '');
+          if (off || control.hasAttribute('data-unavailable')) control.toggleAttribute('disabled', off);
+          if (!off) control.removeAttribute('data-unavailable');
+        }
+      }
+      if (unavailable.has('products')) showMessage(productGroup, null);
+    }
+
     function applyRequired(required) {
       for (const [field, id] of Object.entries(TEXT_FIELD_INPUTS)) {
-        FIELDS[id].required = required.includes(field);
+        FIELDS[id].required = required.includes(field) && !unavailable.has(field);
         // A required field isn't "Optional", and isn't hidden behind a toggle.
         const section = $(`[data-field="${field}"]`);
         for (const tag of section.querySelectorAll('.tag')) tag.hidden = FIELDS[id].required;
       }
       if (FIELDS.description.required && descriptionToggle.getAttribute('aria-expanded') !== 'true') descriptionToggle.click();
-      productsRequired = required.includes('products');
+      productsRequired = required.includes('products') && !unavailable.has('products');
       showMessage(productGroup, null);
     }
 
@@ -857,7 +929,7 @@
       let firstInvalid = null;
       for (const id of Object.keys(FIELDS)) {
         const input = $(`#${id}`);
-        if (!isShown(input)) continue;
+        if (!isShown(input) || isUnavailableInput(id)) continue;
         touched.add(id);
         refresh(id);
         if (validate(id) && !firstInvalid) firstInvalid = input;
@@ -1023,10 +1095,12 @@
     let isFigJam = false;
     // The values of the last Create, reused by "Re-create file structure".
     let lastData = null;
+    // Set when the plugin can't reach the library: nothing can be created, so Create stays disabled.
+    let libraryUnavailable = false;
     function setCreating(creating) {
-      createButton.toggleAttribute('disabled', creating);
+      createButton.toggleAttribute('disabled', creating || libraryUnavailable);
       createButton.textContent = creating ? creatingLabel : createLabel;
-      createAgainButton.toggleAttribute('disabled', creating);
+      createAgainButton.toggleAttribute('disabled', creating || libraryUnavailable);
       createAgainButton.textContent = creating ? creatingLabel : createAgainLabel;
     }
 
@@ -1059,17 +1133,19 @@
       const value = (id) => FIELDS[id].clean($(`#${id}`).value);
       const data = { fileType, name: value('name') };
       // Sent whenever the section applies, even if collapsed after typing.
-      if (isShown($('#description-section'))) data.description = value('description');
-      if (isShown($('#contributors'))) data.contributors = value('contributors');
-      if (isShown($('#github-issue-url'))) data.githubIssueUrl = value('github-issue-url');
-      if (isShown(otherCheckbox)) {
+      // Fields the thumbnail can't show (disabled) aren't sent.
+      if (isShown($('#description-section')) && !unavailable.has('description')) data.description = value('description');
+      if (isShown($('#contributors')) && !unavailable.has('contributors')) data.contributors = value('contributors');
+      if (isShown($('#github-issue-url')) && !unavailable.has('githubIssueUrl')) data.githubIssueUrl = value('github-issue-url');
+      if (isShown(otherCheckbox) && !unavailable.has('products')) {
         data.products = [...document.querySelectorAll('fig-checkbox[name="product"]')]
           .filter((checkbox) => checkbox.checked)
           .map((checkbox) =>
             checkbox === otherCheckbox ? value('product-other-name') || 'Other' : checkbox.value,
           );
       }
-      data.externallyAccessible = isShown($('#external-access')) && $('#external-access').checked;
+      data.externallyAccessible =
+        isShown($('#external-access')) && !unavailable.has('externalAccess') && $('#external-access').checked;
       return data;
     }
 
@@ -1219,6 +1295,19 @@
       if (msg?.type === 'create-failed') setCreating(false);
       if (msg?.type === 'created') showCreated(msg.fileName, msg.changed, msg.skipped, msg.warnings, msg.cleanup, msg.backedUp);
       if (msg?.type === 'debug') showDebug(msg.info);
+      if (msg?.type === 'library-unavailable') {
+        libraryUnavailable = true;
+        $('#library-error').hidden = false;
+        setCreating(false);
+      }
+      if (msg?.type === 'unavailable-fields') {
+        unavailableByTemplate = msg.byTemplate ?? {};
+        // The form may already be open: a field that just became unavailable isn't required.
+        if (fileType) {
+          applyUnavailable(fileType);
+          applyRequired(FILE_TYPES[fileType].requiredFields);
+        }
+      }
       if (msg?.type === 'debug-file-name') $('#debug-file-name').textContent = msg.fileName || '—';
       // Initial values from the plugin (e.g. the remembered contributor name).
       if (msg?.type !== 'init') return;

@@ -21,6 +21,11 @@
           "detach": true,
           "x": 0,
           "y": 0
+        },
+        {
+          "component": "1811fe538578a98b2c471e33d79afba3d384afd1",
+          "x": 1927,
+          "y": 0
         }
       ]
     },

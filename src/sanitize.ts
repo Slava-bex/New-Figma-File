@@ -1,5 +1,5 @@
 import { fieldsOf, findTemplate, requiredFieldsOf } from './templates';
-import type { NewFileData } from './types';
+import type { FormField, NewFileData } from './types';
 
 // Same constraints as the UI (Figma: "Input validation & constraints"). The UI
 // already enforces them; this is a safety net so the plugin never acts on bad data.
@@ -22,15 +22,16 @@ export function cleanGithubIssueUrl(value: unknown): string | null {
   return match ? `https://github.com/${match[1]}/${match[2]}/issues/${match[3]}` : null;
 }
 
-// Returns sanitized data, or an error message if it can't be used.
-export function sanitize(data: NewFileData): NewFileData | string {
+// Returns sanitized data, or an error message if it can't be used. `unavailable`:
+// fields the thumbnail component can't show, which the form disables (dropped here too).
+export function sanitize(data: NewFileData, unavailable: readonly FormField[] = []): NewFileData | string {
   const template = findTemplate(data.fileType);
   if (!template) return 'Unknown file type';
   const name = cleanText(data.name, LIMITS.name.max);
   if (name.length < LIMITS.name.min) return `Name needs at least ${LIMITS.name.min} characters`;
 
-  // Only keep the fields this template shows.
-  const fields = fieldsOf(template);
+  // Only keep the fields this template shows and the thumbnail can take.
+  const fields = fieldsOf(template).filter((field) => !unavailable.includes(field));
   const has = (field: (typeof fields)[number]) => fields.includes(field);
   const clean: NewFileData = {
     fileType: template.id,
@@ -53,6 +54,7 @@ export function sanitize(data: NewFileData): NewFileData | string {
   }
   for (const field of requiredFieldsOf(template)) {
     if (field === 'externalAccess') continue; // a switch; never required (requiredFieldsOf drops it)
+    if (unavailable.includes(field)) continue; // disabled in the form, so it can't be filled in
     const value = clean[field];
     if (Array.isArray(value) ? value.length === 0 : !value) {
       return field === 'products' ? 'Select at least one product' : `${field} is required`;

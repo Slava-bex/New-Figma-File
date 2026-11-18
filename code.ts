@@ -9,11 +9,12 @@ import {
   saveContributorName,
 } from './src/contributor-memory';
 import { createFile } from './src/create';
+import { unavailableFields } from './src/availability';
 import { sanitize } from './src/sanitize';
 import { fileNameFor } from './src/placeholders';
 import { checkTemplates, findTemplate, templateSummaries } from './src/templates';
-import type { NewFileData } from './src/types';
-import { DISPLAY_VERSION } from './src/version';
+import type { FileType, FormField, NewFileData } from './src/types';
+import { DISPLAY_VERSION, PLUGIN_NAME } from './src/version';
 
 type UIMessage =
   | { type: 'ready' }
@@ -77,11 +78,14 @@ if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
 
   figma.showUI(__html__, {
     themeColors: true,
-    title: editor === 'figjam' ? 'Insert thumbnail' : 'New file',
+    title: editor === 'figjam' ? 'Insert thumbnail' : PLUGIN_NAME,
     width: WIDTH,
     height: INITIAL_HEIGHT,
     position: launchPosition(),
   });
+
+  // Per template, the form fields it can't fill (see src/availability.ts).
+  let unavailable: Record<FileType, FormField[]> = {};
 
   figma.ui.onmessage = async (msg: UIMessage) => {
     // The UI asks for its initial values once its script has loaded.
@@ -99,6 +103,16 @@ if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
         window: { min: MIN_HEIGHT, max: MAX_HEIGHT },
       });
       await sendDebug({ prefill: contributors });
+      // Afterwards, so loading the library components doesn't delay the form: which
+      // fields each template can't fill (the form disables them).
+      const fields = await unavailableFields(editor);
+      if (fields === null) {
+        // The library can't be reached: the form says so and disables Create.
+        figma.ui.postMessage({ type: 'library-unavailable' });
+        return;
+      }
+      unavailable = fields;
+      if (Object.keys(unavailable).length) figma.ui.postMessage({ type: 'unavailable-fields', byTemplate: unavailable });
       return;
     }
 
@@ -145,7 +159,7 @@ if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
         figma.ui.postMessage({ type: 'create-failed' });
       };
 
-      const data = sanitize(msg.data);
+      const data = sanitize(msg.data, unavailable[msg.data.fileType] ?? []);
       if (typeof data === 'string') return fail(data);
 
       // Saved on Create even if building the file fails afterwards.

@@ -1,6 +1,8 @@
 // Building blocks used by the builder (./index.ts) and the fillers: undo
 // tracking, placing library components, and finding and filling layers.
 
+import { withLibraryTimeout } from '../library';
+
 /** Tracks what a run changes, so a failed run can be undone. */
 export class CreateContext {
   private readonly undo: (() => void)[] = [];
@@ -43,10 +45,10 @@ export type Parent = PageNode | SectionNode | FrameNode;
 export async function placeComponent(ctx: CreateContext, componentKey: string, parent: Parent): Promise<InstanceNode> {
   let component: ComponentNode;
   try {
-    component = await figma.importComponentByKeyAsync(componentKey);
+    component = await withLibraryTimeout(figma.importComponentByKeyAsync(componentKey));
   } catch {
     throw new Error(
-      `Couldn't load component ${componentKey} from the library. Check that it's published and that you have access to it.`,
+      `Couldn't load component ${componentKey} from the library. Check that it's published, that the library is enabled for this file, and that you're online.`,
     );
   }
   const instance = component.createInstance();
@@ -82,6 +84,10 @@ export async function setText(node: TextNode, text: string) {
 export function setLink(node: TextNode, url: string) {
   node.hyperlink = { type: 'URL', value: url };
 }
+
+/** Whether the instance has a component property with this id (see setProperties). */
+export const hasProperty = (instance: InstanceNode, id: string) =>
+  Object.keys(instance.componentProperties).some((k) => k === id || k.endsWith(`#${id}`));
 
 /**
  * Sets component properties by their id, e.g. { '829:1': 'Foo' } for "Title#829:1",
