@@ -28,7 +28,7 @@ type UIMessage =
 // Shows a "Capture this file as JSON template" tool on the File type step: turns the
 // open file into a template file for templates/ (see templates/README.md).
 // For building templates only; turn off before publishing.
-const CAPTURE = true;
+const CAPTURE = false;
 
 // Shows a debug panel under the form: a preview of the suggested file name, and
 // (for templates with a Contributors field) the remembered contributor name:
