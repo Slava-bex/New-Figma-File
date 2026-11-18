@@ -101,7 +101,14 @@ const options = {
 
 if (process.argv.includes('--watch')) {
   // While watching, template problems are printed on every rebuild but don't stop it.
-  const checkOnRebuild = { name: 'template-check', setup: (build) => build.onEnd(() => reportTemplateChecks()) };
+  // (onEnd may only return nothing or an object, so the result isn't passed on.)
+  const checkOnRebuild = {
+    name: 'template-check',
+    setup: (build) =>
+      build.onEnd(async () => {
+        await reportTemplateChecks();
+      }),
+  };
   const ctx = await esbuild.context({ ...options, plugins: [...options.plugins, checkOnRebuild] });
   await ctx.watch();
   console.log(`[build-code] watching (v${version})…`);
