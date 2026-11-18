@@ -114,11 +114,50 @@
     }
     /* Plugin version, right side of the File type heading row: present but quiet. */
     .version {
+      position: relative; /* anchors the tooltip */
       margin-left: auto;
       color: var(--figma-color-text-tertiary, var(--figma-color-text-disabled));
       opacity: 0.25;
       font-size: 10px;
       font-variant-numeric: tabular-nums;
+      text-decoration: none;
+      transition:
+        color var(--motion-fast) ease-out,
+        opacity var(--motion-fast) ease-out;
+    }
+    /* On hover: the editor's brand color, as on primary buttons (blue in Figma, purple in FigJam). */
+    .version:hover,
+    .version:focus-visible {
+      color: var(--figma-color-text-brand, var(--figma-color-bg-brand));
+      opacity: 1;
+      text-decoration: none;
+    }
+    /* Its tooltip: below the link, right edges aligned, so it opens towards the left
+       and stays inside the window (the link sits at the window's right edge). Shows
+       after a short delay, hides at once. */
+    .version::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 10;
+      padding: var(--spacer-1) var(--spacer-2);
+      border-radius: var(--radius-medium, 6px);
+      background: var(--figma-color-bg-tooltip, #1E1E1E);
+      color: var(--figma-color-text-tooltip, #FFF);
+      font-size: 11px;
+      line-height: 16px;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity var(--motion-fast) ease-out, visibility 0s linear var(--motion-fast);
+    }
+    .version:hover::after,
+    .version:focus-visible::after {
+      opacity: 1;
+      visibility: visible;
+      transition: opacity var(--motion-fast) ease-out 150ms, visibility 0s linear 150ms;
     }
     .hint a {
       display: inline-flex;
@@ -134,15 +173,30 @@
     }
 
     /* Step 3: created */
-    .success {
+    /* The done step's messages sit closer together than the step's other blocks;
+       the step's own gap stays above and below the group. */
+    .done-messages {
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      gap: calc(var(--spacer-4) / 3);
+    }
+    /* Message on the done step: layout shared, colors by type (.success or .info). */
+    .message-done {
+      display: flex;
       gap: var(--spacer-2);
       margin: 0;
       padding: var(--spacer-3);
       border-radius: var(--radius-medium, 6px);
+    }
+    .message-done svg { flex-shrink: 0; }
+    .message-done.success {
       background: var(--figma-color-bg-success-tertiary, #EEF7F2);
       color: var(--figma-color-text-success, #14AE5C);
+    }
+    /* FigJam's thumbnail reminder: neutral instead of green. */
+    .message-done.info {
+      background: var(--figma-color-bg-secondary, #F5F5F5);
+      color: var(--figma-color-text, #000);
     }
     .file-name-row {
       display: flex;
@@ -226,6 +280,41 @@
     /* Collapsible sections (Short description, "Other" product name) animate
        their height in the script: see setSectionVisible(). */
 
+    /* FigJam's "Set as thumbnail" reminder: an eye-catching entrance, played once
+       each time the done step shows it (.attention is added by showCreated). It
+       starts after the step has slid in: a pop, a blue tint with a single
+       pulsing ring, and a wiggle of the icon, about 3 seconds in all. It ends on the
+       message's normal look. */
+    .message-done.attention {
+      --attention: var(--figma-color-border-brand-strong, #0D99FF);
+      --attention-bg: var(--figma-color-bg-brand-tertiary, #E5F4FF);
+      animation:
+        attention-pop 600ms var(--motion-ease) var(--motion-page) backwards,
+        attention-glow 3s ease-out var(--motion-page);
+    }
+    .message-done.attention svg {
+      animation: attention-wiggle 900ms ease-in-out calc(var(--motion-page) + 400ms);
+    }
+    @keyframes attention-pop {
+      from { opacity: 0; transform: scale(0.94); }
+      55% { opacity: 1; transform: scale(1.03); }
+      to { transform: scale(1); }
+    }
+    @keyframes attention-glow {
+      0% { background-color: var(--attention-bg); box-shadow: 0 0 0 0 var(--attention); }
+      35% { box-shadow: 0 0 0 8px transparent; }
+      70% { background-color: var(--attention-bg); }
+      100% { background-color: var(--figma-color-bg-secondary, #F5F5F5); box-shadow: 0 0 0 0 transparent; }
+    }
+    @keyframes attention-wiggle {
+      0%, 100% { transform: rotate(0) scale(1); }
+      15% { transform: rotate(-14deg) scale(1.2); }
+      30% { transform: rotate(12deg) scale(1.2); }
+      45% { transform: rotate(-8deg) scale(1.1); }
+      60% { transform: rotate(5deg) scale(1.05); }
+      75% { transform: rotate(0) scale(1); }
+    }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation: none !important;
@@ -296,12 +385,19 @@
       color: var(--figma-color-text);
       font: 10px/1.4 ui-monospace, Menlo, monospace;
     }
-    #capture-warnings {
+    #capture-warnings,
+    #done-warnings {
       margin: 0;
       padding-left: var(--spacer-3);
       color: var(--figma-color-text-warning, var(--figma-color-text-secondary));
     }
-    #capture-warnings:empty { display: none; }
+    #capture-warnings:empty,
+    #done-warnings:empty { display: none; }
+    #done-cleanup-list {
+      margin: 0;
+      padding-left: var(--spacer-3);
+      color: var(--figma-color-text-secondary);
+    }
   </style>
 </head>
 <body>
@@ -311,8 +407,10 @@
     <section class="step" id="step-type" hidden>
       <div class="step-header">
         <h2>File type</h2>
-        <!-- Filled from package.json "version" (sent with the init message). -->
-        <span class="version" id="version" hidden></span>
+        <!-- Filled from package.json "version" (sent with the init message). Opens the repository. -->
+        <!-- The tooltip is CSS (see .version::after), not title="" (whose delay can't be
+             shortened) or fig-tooltip (which centers it, cut off at the window edge). -->
+        <a class="version" id="version" href="#" aria-label="View on GitHub" data-tooltip="View on GitHub" hidden></a>
       </div>
       <!-- One row per template in templates/ (filled from the init message). -->
       <fig-stack direction="vertical" gap="1" class="type-list" id="type-list" full></fig-stack>
@@ -418,20 +516,54 @@
         <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
       </fig-stack>
 
-      <fig-button id="create" size="large" full>Create file</fig-button>
+      <fig-button id="create" size="large" full>Create file structure</fig-button>
     </section>
 
     <!-- Step 3: shown after the file was built. Plugins can't rename the file, so the user copies the name. -->
     <section class="step" id="step-done" hidden>
-      <p class="success" role="status">
+      <!-- Back to the form, with the values as they were entered. -->
+      <div class="step-header">
+        <fig-button id="done-back" variant="ghost" size="large" icon aria-label="Back to the form">
+          <fig-icon name="back"></fig-icon>
+        </fig-button>
+        <h2 id="done-heading"></h2>
+      </div>
+      <div class="done-messages">
+      <p class="message-done success" id="done" role="status">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <span id="done-message">File structure created.</span>
+        <span>File structure created.<span id="done-backup" hidden> Backup stored in Version history.</span></span>
       </p>
+      <!-- Instead of the success message when every page was skipped. -->
+      <p class="message-done info" id="done-unchanged" role="status" hidden>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor"/>
+          <path d="M8 7v4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="8" cy="4.75" r="0.9" fill="currentColor"/>
+        </svg>
+        <span>No changes applied.</span>
+      </p>
+      <!-- FigJam only: plugins can't set the file thumbnail there. -->
+      <p class="message-done info" id="done-figjam" hidden>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor"/>
+          <path d="M8 7v4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="8" cy="4.75" r="0.9" fill="currentColor"/>
+        </svg>
+        <span>Plug-in can't set thumbnails in FigJam. Right click and 'Set as thumbnail' manually.</span>
+      </p>
+      </div>
+      <!-- Warnings from creating the file, e.g. pages skipped because the file already has them. -->
+      <ul id="done-warnings"></ul>
+      <!-- What was done to the file's existing pages (renames, removed dividers, moves). -->
+      <fig-stack id="done-cleanup" direction="vertical" gap="1" full hidden>
+        <p class="section-label">Clean-up actions</p>
+        <ul id="done-cleanup-list"></ul>
+      </fig-stack>
       <!-- Hidden when the file already has the suggested name. -->
       <fig-stack id="rename" direction="vertical" gap="1" full>
-        <p class="section-label">Rename your file to</p>
+        <p class="section-label" id="rename-label">Rename your file to</p>
         <div class="file-name-row">
           <span id="file-name"></span>
           <fig-button id="file-name-copy" variant="secondary">
@@ -443,6 +575,9 @@
           </fig-button>
         </div>
       </fig-stack>
+      <!-- Only when pages were skipped: runs Create with the same values again,
+           e.g. after deleting or renaming the pages that were in the way. -->
+      <fig-button id="create-again" size="large" full hidden>Re-create file structure</fig-button>
     </section>
 
     <!-- Only shown when DEBUG is on in code.ts. -->
@@ -533,6 +668,13 @@
       event.preventDefault();
       post({ type: 'open-url', url: FILE_TYPES_URL });
     });
+
+    const REPOSITORY_URL = 'https://github.com/Slava-bex/New-Figma-File';
+    $('#version').addEventListener('click', (event) => {
+      event.preventDefault();
+      post({ type: 'open-url', url: REPOSITORY_URL });
+    });
+
 
     // ---- Validation & sanitization ----
     // Constraints (Figma: "Input validation & constraints"):
@@ -834,16 +976,41 @@
     // FigJam changes these (see the init message).
     let createLabel = createButton.textContent;
     let creatingLabel = 'Creating…';
+    const createAgainButton = $('#create-again');
+    const createAgainLabel = createAgainButton.textContent;
+    // Set by the init message when the plugin runs in FigJam.
+    let isFigJam = false;
+    // The values of the last Create, reused by "Re-create file structure".
+    let lastData = null;
     function setCreating(creating) {
       createButton.toggleAttribute('disabled', creating);
       createButton.textContent = creating ? creatingLabel : createLabel;
+      createAgainButton.toggleAttribute('disabled', creating);
+      createAgainButton.textContent = creating ? creatingLabel : createAgainLabel;
     }
 
     createButton.addEventListener('click', () => {
       if (createButton.hasAttribute('disabled')) return;
       if (!fileType || !validateVisibleFields()) return;
       setCreating(true);
-      post({ type: 'create-file', data: collectData() });
+      lastData = collectData();
+      post({ type: 'create-file', data: lastData });
+    });
+
+    createAgainButton.addEventListener('click', () => {
+      if (createAgainButton.hasAttribute('disabled') || !lastData) return;
+      setCreating(true);
+      post({ type: 'create-file', data: lastData });
+    });
+
+    // Step 3 -> step 2, with the form as it was.
+    $('#done-back').addEventListener('click', () => {
+      setCreating(false);
+      document.body.dataset.nav = 'back';
+      $('#step-done').hidden = true;
+      stepDetails.hidden = false;
+      updateDebug();
+      $('#name').focus();
     });
 
     // Only the fields that are visible for this file type, sanitized.
@@ -961,7 +1128,41 @@
 
     // Step 2 -> step 3, once the plugin has built the file.
     // fileName is null when the file already has the suggested name.
-    function showCreated(fileName) {
+    // changed is false when every page was skipped: "No changes applied" instead of success.
+    // skipped is true when any page was skipped: offers "Re-create file structure".
+    // cleanup lists what was done to the file's existing pages, under "Clean-up actions".
+    // backedUp: a backup version was saved first; the success message says so.
+    function showCreated(fileName, changed = true, skipped = false, warnings = [], cleanup = [], backedUp = false) {
+      setCreating(false);
+      $('#done-backup').hidden = !backedUp;
+      $('#done-cleanup').hidden = cleanup.length === 0;
+      $('#done-cleanup-list').replaceChildren(
+        ...cleanup.map((action) => {
+          const li = document.createElement('li');
+          li.textContent = action;
+          return li;
+        }),
+      );
+      $('#done-heading').textContent = FILE_TYPES[fileType]?.templateFormHeading ?? '';
+      createAgainButton.hidden = !skipped;
+      $('#done').hidden = !changed;
+      $('#done-unchanged').hidden = changed;
+      // FigJam's thumbnail reminder only matters when a thumbnail was inserted.
+      // It plays its attention animation once each time it's shown (restarted on a re-run).
+      const reminder = $('#done-figjam');
+      reminder.hidden = !(isFigJam && changed);
+      reminder.classList.remove('attention');
+      if (!reminder.hidden) {
+        void reminder.offsetWidth; // restart the animation
+        reminder.classList.add('attention');
+      }
+      $('#done-warnings').replaceChildren(
+        ...warnings.map((warning) => {
+          const li = document.createElement('li');
+          li.textContent = warning;
+          return li;
+        }),
+      );
       $('#rename').hidden = !fileName;
       $('#file-name').textContent = fileName ?? '';
       document.body.dataset.nav = 'forward';
@@ -975,7 +1176,7 @@
       if (msg?.type === 'capture-result') showCapture(msg);
       // The plugin shows the error itself; just make the form usable again.
       if (msg?.type === 'create-failed') setCreating(false);
-      if (msg?.type === 'created') showCreated(msg.fileName);
+      if (msg?.type === 'created') showCreated(msg.fileName, msg.changed, msg.skipped, msg.warnings, msg.cleanup, msg.backedUp);
       if (msg?.type === 'debug') showDebug(msg.info);
       if (msg?.type === 'debug-file-name') $('#debug-file-name').textContent = msg.fileName || '—';
       // Initial values from the plugin (e.g. the remembered contributor name).
@@ -993,7 +1194,10 @@
         createLabel = 'Insert thumbnail';
         creatingLabel = 'Inserting…';
         createButton.textContent = createLabel;
-        $('#done-message').textContent = 'Thumbnail inserted.';
+        isFigJam = true;
+        // No File type step in FigJam: the version goes to the right of the form's heading.
+        stepDetails.querySelector('.step-header').append($('#version'));
+        $('#rename-label').textContent = 'Suggested file name';
         openDetails(msg.templates[0].id);
         delete document.body.dataset.nav;
       } else {

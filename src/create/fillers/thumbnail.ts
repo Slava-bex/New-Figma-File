@@ -21,7 +21,7 @@ export const fillThumbnail: Filler = async (root, data) => {
   // filled in → shown with that text; empty → hidden, its text left as it is.
   const descriptionText = data.description?.trim() ?? '';
   const asksDescription = data.description !== undefined;
-  setProperties(thumbnail, {
+  await setProperties(thumbnail, {
     [title]: data.name,
     ...(asksDescription && { [showDescription]: Boolean(descriptionText) }),
     ...(descriptionText && { [description]: descriptionText }),
@@ -55,8 +55,8 @@ async function fillProduct(pill: InstanceNode, products: string[]) {
   const options = await variantOptions(pill, product);
   const known = products.length === 1 ? options.find((o) => o.toLowerCase() === products[0].toLowerCase()) : undefined;
   if (known) {
-    setProperties(pill, { [product]: known });
+    await setProperties(pill, { [product]: known });
   } else {
-    setProperties(pill, { [product]: 'Custom', [customName]: products.join(', ') });
+    await setProperties(pill, { [product]: 'Custom', [customName]: products.join(', ') });
   }
 }

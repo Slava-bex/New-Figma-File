@@ -59,11 +59,19 @@ build();
 
 if (process.argv.includes('--watch')) {
   console.log('[build-ui] watching ui.html…');
-  watch(srcPath, () => {
-    try {
-      build();
-    } catch (err) {
-      console.error('[build-ui]', err.message);
-    }
+  // Watch the folder, not the file: editors often save by replacing ui.html, and a
+  // watcher on the file itself then stops (it keeps watching the deleted original).
+  // A save fires several events, so rebuild once they settle.
+  let timer;
+  watch(root, (_event, filename) => {
+    if (filename !== 'ui.html') return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      try {
+        build();
+      } catch (err) {
+        console.error('[build-ui]', err.message);
+      }
+    }, 50);
   });
 }

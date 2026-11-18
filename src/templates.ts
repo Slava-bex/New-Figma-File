@@ -11,9 +11,9 @@ export interface TemplateDef {
   /** File name without .json. */
   id: FileType;
   /**
-   * Where the template is offered (default "figma"). A "figjam" template doesn't
-   * touch pages: its content is placed on the current board, and the plugin opens
-   * straight on its form.
+   * Where the template is offered (default "figma"). In FigJam the plugin opens
+   * straight on the first FigJam template's form; its pages are built like any
+   * template's, but the file thumbnail isn't set (FigJam doesn't support it).
    */
   editor?: TemplateEditor;
   order?: number;

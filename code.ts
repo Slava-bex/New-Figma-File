@@ -1,5 +1,5 @@
 // Plugin entry point: opens the UI and handles its messages.
-// What "Create file" builds is defined per template in templates/ (see templates/README.md).
+// What "Create file structure" builds is defined per template in templates/ (see templates/README.md).
 
 import { captureFile } from './src/capture';
 import {
@@ -138,15 +138,14 @@ if (figma.editorType === 'figma' || figma.editorType === 'figjam') {
       await sendDebug({ lastSave: saveResult });
 
       try {
-        const { fileName, warnings } = await createFile(data);
-        if (warnings.length) {
-          console.warn(`Template warnings:\n${warnings.join('\n')}`);
-          figma.notify(warnings.join(' '), { timeout: 10000 });
-        }
-        // The plugin stays open on the "created" screen, which suggests the file name
-        // only while the file is still "Untitled" (a name someone chose is left alone).
-        const untitled = figma.root.name.trim().toLowerCase() === 'untitled';
-        figma.ui.postMessage({ type: 'created', fileName: untitled ? fileName : null });
+        const { fileName, changed, skipped, warnings, cleanup, backedUp } = await createFile(data);
+        if (cleanup.length) console.log(`Clean-up actions:\n${cleanup.join('\n')}`);
+        if (warnings.length) console.warn(`Template warnings:\n${warnings.join('\n')}`);
+        // The plugin stays open on the "created" screen, which lists the warnings (e.g.
+        // skipped pages) and suggests the file name unless the file already has it
+        // (Figma and FigJam alike).
+        const named = figma.root.name.trim() === fileName;
+        figma.ui.postMessage({ type: 'created', fileName: named ? null : fileName, changed, skipped, warnings, cleanup, backedUp });
       } catch (error) {
         console.error(error);
         return fail(error instanceof Error ? error.message : String(error));

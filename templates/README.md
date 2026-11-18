@@ -9,7 +9,7 @@ Each JSON file in this folder is one template in the plugin's **File type** list
 3. Open the template file in Figma, run the plugin and click **Capture** at the bottom of the File type step.
 4. Copy the JSON into this folder under the suggested file name, or over the template it replaces.
 5. Set the form details at the top of the file:
-   - `editor`: `"figma"` (default) or `"figjam"`. FigJam opens straight on the first FigJam template's form and places its content on the current board, without touching pages.
+   - `editor`: `"figma"` (default) or `"figjam"`. FigJam opens straight on the first FigJam template's form and builds its pages like any template, except that it can't set the file thumbnail.
    - `templateName`: name in the File type list
    - `order`: position in the list
    - `thumbnailTitleLabel`: label of the name field, e.g. "Project name"

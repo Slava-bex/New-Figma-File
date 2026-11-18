@@ -1,5 +1,9 @@
-// Injected at build time from package.json (scripts/build-code.mjs).
+// Injected at build time from package.json and manifest.json (scripts/build-code.mjs).
 declare const __PLUGIN_VERSION__: string;
+declare const __PLUGIN_NAME__: string;
+
+/** The plugin's name from manifest.json, e.g. "New Figma File". */
+export const PLUGIN_NAME = typeof __PLUGIN_NAME__ === 'string' ? __PLUGIN_NAME__ : 'the plugin';
 
 /** Full version, e.g. "2.0.0". "dev" if the build didn't inject one (e.g. an outdated watch process). */
 export const VERSION = typeof __PLUGIN_VERSION__ === 'string' ? __PLUGIN_VERSION__ : 'dev';

@@ -4,7 +4,14 @@ Figma plugin that sets up a new design file (pages, thumbnail) based off a chose
 
 1. Open a new Figma file
 2. Run **New Figma File** plugin
-3. Pick pick a template and fill in the details. Click **Create file**.
+3. Pick a template and fill in the details. Click **Create file structure**.
+
+
+## Safe to run on existing files
+
+- Plugin saves a named backup to the file's version history before applying any changes.
+- Does not modify or delete existing content.
+
 
 ## Changing templates
 

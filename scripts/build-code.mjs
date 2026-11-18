@@ -2,7 +2,8 @@
 // Builds the plugin code: bundles code.ts (and src/) into code.js.
 //
 // - The plugin version comes from package.json ("version") and is injected as
-//   __PLUGIN_VERSION__ (see src/version.ts). Bump it with `npm version minor`
+//   __PLUGIN_VERSION__ (see src/version.ts); the plugin name comes from
+//   manifest.json ("name") as __PLUGIN_NAME__. Bump it with `npm version minor`
 //   (or major/patch) rather than editing it in several places.
 // - The file templates are read from templates/*.json and provided as the
 //   module "build:all-templates" (see src/templates.ts). Adding a JSON file there
@@ -18,6 +19,7 @@ import * as esbuild from 'esbuild';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const templatesDir = join(root, 'templates');
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const { name: pluginName } = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 
 function readJson(path) {
   try {
@@ -51,7 +53,7 @@ const options = {
   bundle: true,
   target: 'es2020',
   logLevel: 'warning',
-  define: { __PLUGIN_VERSION__: JSON.stringify(version) },
+  define: { __PLUGIN_VERSION__: JSON.stringify(version), __PLUGIN_NAME__: JSON.stringify(pluginName) },
   plugins: [templateImporter],
 };
 

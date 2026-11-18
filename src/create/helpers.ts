@@ -87,7 +87,7 @@ export function setLink(node: TextNode, url: string) {
  * Sets component properties by their id, e.g. { '829:1': 'Foo' } for "Title#829:1",
  * so renaming a property doesn't matter. Variant properties have no id and go by name.
  */
-export function setProperties(instance: InstanceNode, values: Record<string, string | boolean>) {
+export async function setProperties(instance: InstanceNode, values: Record<string, string | boolean>) {
   const keys = Object.keys(instance.componentProperties);
   const resolved: Record<string, string | boolean> = {};
   for (const [id, value] of Object.entries(values)) {
@@ -95,7 +95,33 @@ export function setProperties(instance: InstanceNode, values: Record<string, str
     if (!key) throw new Error(`Couldn't fill "${instance.name}": missing property "${id}"`);
     resolved[key] = value;
   }
+  // Without its fonts loaded, Figma may not redraw the new values until the
+  // instance is edited. After the change too: a variant switch can bring new fonts.
+  await loadFontsOf(instance);
   instance.setProperties(resolved);
+  await loadFontsOf(instance);
+}
+
+/** Fonts already loaded in this run; loading is requested once per font. */
+const loadedFonts = new Set<string>();
+
+/** Loads every font used by the text layers inside `node`. */
+async function loadFontsOf(node: InstanceNode) {
+  const fonts = new Map<string, FontName>();
+  for (const text of node.findAllWithCriteria({ types: ['TEXT'] })) {
+    const used = text.characters.length > 0 ? text.getRangeAllFontNames(0, text.characters.length) : [text.fontName];
+    for (const font of used) {
+      if (font === figma.mixed) continue;
+      const key = `${font.family}|${font.style}`;
+      if (!loadedFonts.has(key)) fonts.set(key, font);
+    }
+  }
+  await Promise.all(
+    [...fonts].map(async ([key, font]) => {
+      await figma.loadFontAsync(font);
+      loadedFonts.add(key);
+    }),
+  );
 }
 
 /** The options of a variant property, e.g. every "Product" value. */
