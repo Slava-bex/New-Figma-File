@@ -12,6 +12,8 @@ export class CreateContext {
   readonly claimedPages = new Set<PageNode>();
   /** Set as the file thumbnail once everything is built. */
   thumbnail: FrameNode | null = null;
+  /** Library components that couldn't be loaded: skipped instead of stopping the run. */
+  readonly failedComponents: Error[] = [];
 
   /** Registers a node this run created; it's removed on rollback. */
   track<T extends PageNode | SceneNode>(node: T): T {

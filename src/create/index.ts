@@ -152,6 +152,7 @@ export async function createFile(data: NewFileData): Promise<{
         }
         if (!page.isPageDivider) built = true;
         const gap = def.gap ?? DEFAULT_PAGE_GAP;
+        const failedBefore = ctx.failedComponents.length;
         const placed = await placeItems(ctx, page, def.content ?? [], names, {
           gap,
           direction: def.direction ?? 'horizontal',
@@ -160,11 +161,21 @@ export async function createFile(data: NewFileData): Promise<{
         });
         if (oldSection) placeRightOf(oldSection, placed, gap);
         // Put the form data into whatever library components were placed.
+        let placedThumbnail = false;
         for (const node of placed) {
           for (const fill of FILLERS) {
             const { thumbnail } = await fill(node, data);
+            if (thumbnail) placedThumbnail = true;
             ctx.thumbnail ??= thumbnail ?? null;
           }
+        }
+        // Components that couldn't be loaded are skipped with a warning, except on the
+        // thumbnail page when the thumbnail itself is missing: that stops the run.
+        const failed = ctx.failedComponents.slice(failedBefore);
+        if (failed.length) {
+          if (isThumbnailPageName(page.name) && !placedThumbnail) throw failed[0];
+          const what = failed.length === 1 ? 'a component' : `${failed.length} components`;
+          notices.push(`Couldn't insert ${what} on '${page.name.trimStart()}': not found in the library, or the library couldn't be reached.`);
         }
       } catch (error) {
         ctx.rollback();
@@ -623,6 +634,7 @@ async function placeItems(ctx: CreateContext, parent: Parent, items: ContentItem
   let { x, y } = flow === 'auto-layout' ? { x: 0, y: 0 } : flow.origin;
   for (const item of items) {
     const node = await buildItem(ctx, parent, item, names);
+    if (!node) continue; // a component that couldn't be loaded
     nodes.push(node);
     if (item.sizing && 'layoutSizingHorizontal' in node) {
       if (item.sizing.width) node.layoutSizingHorizontal = SIZING[item.sizing.width];
@@ -649,9 +661,17 @@ async function placeItems(ctx: CreateContext, parent: Parent, items: ContentItem
   return nodes;
 }
 
-async function buildItem(ctx: CreateContext, parent: Parent, item: ContentItem, names: Names): Promise<SceneNode> {
+async function buildItem(ctx: CreateContext, parent: Parent, item: ContentItem, names: Names): Promise<SceneNode | null> {
   if (isComponent(item)) {
-    const instance = await placeComponent(ctx, item.component, parent);
+    // A component that can't be loaded is left out; the page loop decides whether
+    // that stops the run (see failedComponents there).
+    let instance: InstanceNode;
+    try {
+      instance = await placeComponent(ctx, item.component, parent);
+    } catch (error) {
+      ctx.failedComponents.push(error instanceof Error ? error : new Error(String(error)));
+      return null;
+    }
     // Nested library instances (thumbnail cover, link items, …) stay linked when detaching.
     const node = item.detach ? ctx.track(instance.detachInstance()) : instance;
     if (item.name) node.name = names(item.name);

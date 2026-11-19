@@ -44,7 +44,8 @@ Run through this before publishing, and after bigger changes. Use copies of real
 
 - [ ] Library not enabled for the file (or offline): the form shows "Can't reach the Figma library…" and Create stays disabled.
 - [ ] A template with a broken page (e.g. an empty page name) stops `npm run build` with a clear error.
-- [ ] A failing Create (e.g. a template with a component key that doesn't exist) shows an error and leaves the file exactly as it was.
+- [ ] A thumbnail component that can't be loaded (e.g. a key that doesn't exist) shows an error and leaves the file exactly as it was.
+- [ ] Any other component that can't be loaded (e.g. the Change log) is skipped: everything else is created, with a "Couldn't insert a component on …" warning.
 - [ ] When the library changes: a field whose target layer is gone is disabled, with the tooltip, and Create still works.
 
 ## 6. Interface
