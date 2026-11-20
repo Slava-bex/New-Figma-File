@@ -20,6 +20,7 @@ Run through this before publishing, and after bigger changes. Use copies of real
 - [ ] No clean-up actions: no divider or "Moved" lines.
 - [ ] Delete one page, click **Re-create file structure**: only that page comes back.
 - [ ] The thumbnail page isn't wrapped into an "OLD Thumbnail" section again.
+- [ ] Delete the new cover, keeping only the "OLD Thumbnail" section, and re-run: a new cover is placed to the left of the section, without a second wrap.
 
 ## 3. Old file clean-up
 

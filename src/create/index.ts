@@ -125,21 +125,26 @@ export async function createFile(data: NewFileData): Promise<{
         // - empty pages get the template's content like a new page (nothing to lose),
         // - an old thumbnail page (the template's thumbnail page, without the current
         //   thumbnail) gets the new content, its old content kept in an "OLD Thumbnail"
-        //   section to the right of it.
+        //   section to the right of it. Content already in such a section (from an
+        //   earlier run) isn't wrapped again (see thumbnailPageState).
         let origin: { x: number; y: number } | null = null;
         let oldSection: SectionNode | null = null;
         if (kind === 'exact' || kind === 'similar') {
           await page.loadAsync();
           const hasContent = (def.content ?? []).length > 0;
           const fillsEmptyPage = page.children.length === 0 && hasContent;
-          const updatesThumbnailPage =
-            !fillsEmptyPage && hasContent && isThumbnailPageName(page.name) && !(await hasThumbnail(page));
+          const thumbnailState =
+            !fillsEmptyPage && hasContent && isThumbnailPageName(page.name) ? await thumbnailPageState(page) : 'current';
+          const updatesThumbnailPage = thumbnailState !== 'current';
           if (!fillsEmptyPage && !updatesThumbnailPage) {
             if (kind === 'exact') notices.push(`Skipped creating '${page.name.trimStart()}': already exists`);
             reused = true;
             continue;
           }
-          if (updatesThumbnailPage) {
+          if (thumbnailState === 'only-old') {
+            // The new cover goes where the old content was; the section moves aside.
+            ({ section: oldSection, origin } = existingOldSection(ctx, page));
+          } else if (thumbnailState === 'old') {
             ({ section: oldSection, origin } = wrapOldContent(ctx, page));
             cleanup.push(`Moved old content of '${page.name.trimStart()}' to section '${OLD_THUMBNAIL_SECTION}'`);
           }
@@ -325,12 +330,38 @@ const OLD_SECTION_PADDING = 100;
 const THUMBNAIL_PAGE_NAMES = ['thumbnail', 'cover'];
 const isThumbnailPageName = (name: string) => THUMBNAIL_PAGE_NAMES.includes(looseName(name));
 
+const isOldSection = (node: SceneNode): node is SectionNode =>
+  node.type === 'SECTION' && node.name === OLD_THUMBNAIL_SECTION;
+
 /**
- * Whether the page already has the current thumbnail: then it's up to date (e.g. on
- * a re-run) and isn't wrapped again.
+ * What an existing thumbnail page (with content) needs:
+ * - 'current': nothing; it has the current thumbnail, or other content next to an
+ *   "OLD Thumbnail" section from an earlier run (e.g. on a re-run). The section check
+ *   doesn't depend on the library, so it holds even when the thumbnail isn't recognised.
+ * - 'only-old': only "OLD Thumbnail" sections are left (the new cover was deleted):
+ *   a new cover goes in, without wrapping again.
+ * - 'old': an old cover: its content is wrapped into an "OLD Thumbnail" section.
  */
-async function hasThumbnail(page: PageNode): Promise<boolean> {
-  return (await firstInstanceOf(page, THUMBNAIL)) !== null;
+async function thumbnailPageState(page: PageNode): Promise<'current' | 'only-old' | 'old'> {
+  const hasOldSection = page.children.some(isOldSection);
+  if (hasOldSection && page.children.every(isOldSection)) return 'only-old';
+  if (hasOldSection || (await firstInstanceOf(page, THUMBNAIL)) !== null) return 'current';
+  return 'old';
+}
+
+/**
+ * The page's existing "OLD Thumbnail" section, to move aside for the new content,
+ * and where its content starts (for the new content). The move is undone on rollback.
+ */
+function existingOldSection(ctx: CreateContext, page: PageNode) {
+  const section = page.children.filter(isOldSection).sort((a, b) => a.x - b.x)[0];
+  const { x, y } = section;
+  ctx.onRollback(() => {
+    if (section.removed) return;
+    section.x = x;
+    section.y = y;
+  });
+  return { section, origin: { x: x + OLD_SECTION_PADDING, y: y + OLD_SECTION_PADDING } };
 }
 
 /**
@@ -387,10 +418,20 @@ function placeRightOf(section: SectionNode, nodes: SceneNode[], gap: number) {
 const EMOJI =
   /[0-9#*]\ufe0f?\u20e3|\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|[\u{E0020}-\u{E007F}]|\u200d|\ufe0e|\ufe0f|\u20e3/gu;
 
-/** A page name without emojis, spacing and capitals, e.g. "🚧  Concept: X" → "concept:x". */
-const looseName = (name: string) => name.replace(EMOJI, '').replace(/\s+/g, '').toLowerCase();
+/**
+ * Everything but letters and numbers (with their accents): symbols like "❖" or "↪",
+ * punctuation like ":" or "-", and spacing.
+ */
+const NOT_LETTER_OR_NUMBER = /[^\p{L}\p{M}\p{N}]/gu;
 
-/** Same name apart from capitals, emojis and spacing (e.g. "design" and "🎨 Design"). */
+/**
+ * A page name as letters and numbers only, without capitals, e.g.
+ * "🚧  Concept: X" → "conceptx", "❖  Local components" → "localcomponents".
+ * Emojis go first, so a keycap like "1️⃣" doesn't leave its digit behind.
+ */
+const looseName = (name: string) => name.replace(EMOJI, '').replace(NOT_LETTER_OR_NUMBER, '').toLowerCase();
+
+/** Same name apart from capitals, emojis, symbols, punctuation and spacing (e.g. "🧩 Local Components" and "❖ Local components"). */
 const similarName = (a: string, b: string) => looseName(a) !== '' && looseName(a) === looseName(b);
 
 /**

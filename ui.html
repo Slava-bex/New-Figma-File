@@ -339,20 +339,31 @@
     /* Collapsible sections (Short description, "Other" product name) animate
        their height in the script: see setSectionVisible(). */
 
-    /* FigJam's "Set as thumbnail" reminder: an eye-catching entrance, played once
-       each time the done step shows it (.attention is added by showCreated). It
-       starts after the step has slid in: a pop, a blue tint with a single
-       pulsing ring, and a wiggle of the icon, about 3 seconds in all. It ends on the
-       message's normal look. */
-    .message-done.attention {
+    /* FigJam's "Set as thumbnail" reminder and the suggested file name: an
+       eye-catching entrance, played once each time the done step shows them
+       (.attention is added by showCreated). It starts after the step has slid in
+       (plus --attention-delay): a pop, a blue tint with a single pulsing ring, and a
+       wiggle of the icon, about 3 seconds in all. It ends on the normal look
+       (--attention-rest). */
+    .attention {
       --attention: var(--figma-color-border-brand-strong, #0D99FF);
       --attention-bg: var(--figma-color-bg-brand-tertiary, #E5F4FF);
+      --attention-start: calc(var(--motion-page) + var(--attention-delay, 0ms));
       animation:
-        attention-pop 600ms var(--motion-ease) var(--motion-page) backwards,
-        attention-glow 3s ease-out var(--motion-page);
+        attention-pop 600ms var(--motion-ease) var(--attention-start) backwards,
+        attention-glow 3s ease-out var(--attention-start);
     }
-    .message-done.attention svg {
-      animation: attention-wiggle 900ms ease-in-out calc(var(--motion-page) + 400ms);
+    .attention svg {
+      animation: attention-wiggle 900ms ease-in-out calc(var(--attention-start) + 400ms);
+    }
+    /* The file name row has no background of its own; the padding (offset by the
+       margin, so nothing moves) gives the tint room around the name. */
+    .file-name-row {
+      --attention-rest: transparent;
+      padding: var(--spacer-1) var(--spacer-2);
+      margin: calc(-1 * var(--spacer-1)) calc(-1 * var(--spacer-2));
+      width: calc(100% + 2 * var(--spacer-2));
+      border-radius: var(--radius-medium, 6px);
     }
     @keyframes attention-pop {
       from { opacity: 0; transform: scale(0.94); }
@@ -363,7 +374,7 @@
       0% { background-color: var(--attention-bg); box-shadow: 0 0 0 0 var(--attention); }
       35% { box-shadow: 0 0 0 8px transparent; }
       70% { background-color: var(--attention-bg); }
-      100% { background-color: var(--figma-color-bg-secondary, #F5F5F5); box-shadow: 0 0 0 0 transparent; }
+      100% { background-color: var(--attention-rest, var(--figma-color-bg-secondary, #F5F5F5)); box-shadow: 0 0 0 0 transparent; }
     }
     @keyframes attention-wiggle {
       0%, 100% { transform: rotate(0) scale(1); }
@@ -572,7 +583,7 @@
 
       <!-- Data protection -->
       <fig-stack direction="vertical" gap="2" full data-field="externalAccess">
-        <p class="section-label">Data protection</p>
+        <p class="section-label">External access</p>
         <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
       </fig-stack>
 
@@ -1282,6 +1293,15 @@
       );
       $('#rename').hidden = !fileName;
       $('#file-name').textContent = fileName ?? '';
+      // The suggested file name gets the same attention animation, after the
+      // reminder's when both show, so they don't compete.
+      const fileNameRow = $('.file-name-row');
+      fileNameRow.classList.remove('attention');
+      if (fileName) {
+        fileNameRow.style.setProperty('--attention-delay', reminder.hidden ? '0ms' : '1200ms');
+        void fileNameRow.offsetWidth; // restart the animation
+        fileNameRow.classList.add('attention');
+      }
       document.body.dataset.nav = 'forward';
       stepDetails.hidden = true;
       $('#step-done').hidden = false;
