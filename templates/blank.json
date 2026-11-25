@@ -10,7 +10,7 @@
   ],
   "requiredFields": [],
   "fileName": "[Title]",
-  "mainDesignPage": "💻  Design",
+  "mainDesignPage": "[Title]",
   "pages": [
     {
       "name": "📷  Thumbnail",
@@ -40,7 +40,7 @@
       "name": "-"
     },
     {
-      "name": "💻  Design",
+      "name": "[Title]",
       "background": "#ECECEC"
     }
   ]
