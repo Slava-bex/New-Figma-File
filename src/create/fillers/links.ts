@@ -3,7 +3,7 @@
 //
 // Components and layers are found by id (see src/library.ts).
 
-import { findInstances, GITHUB_LINK } from '../../library';
+import { findInstances, GITHUB_LINK, variantValue } from '../../library';
 import { setLink, setText, textLayerById } from '../helpers';
 import type { Filler } from '.';
 
@@ -11,7 +11,7 @@ export const fillLinks: Filler = async (root, data) => {
   if (!data.githubIssueUrl) return {}; // Keep the placeholder to fill in later.
 
   for (const link of await findInstances(root, GITHUB_LINK)) {
-    if (link.componentProperties[GITHUB_LINK.properties.source]?.value !== 'GitHub') continue;
+    if ((await variantValue(link, GITHUB_LINK.properties.source)) !== 'GitHub') continue;
     const label = textLayerById(link, GITHUB_LINK.layers.label);
     const url = textLayerById(link, GITHUB_LINK.layers.url);
 

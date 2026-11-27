@@ -342,7 +342,7 @@
     /* FigJam's "Set as thumbnail" reminder and the suggested file name: an
        eye-catching entrance, played once each time the done step shows them
        (.attention is added by showCreated). It starts after the step has slid in
-       (plus --attention-delay): a pop, a blue tint with a single pulsing ring, and a
+       (plus --attention-delay): a pop, a blue tint with a pulsing ring (a second, dimmer pulse follows), and a
        wiggle of the icon, about 3 seconds in all. It ends on the normal look
        (--attention-rest). */
     .attention {
@@ -373,7 +373,9 @@
     @keyframes attention-glow {
       0% { background-color: var(--attention-bg); box-shadow: 0 0 0 0 var(--attention); }
       35% { box-shadow: 0 0 0 8px transparent; }
-      70% { background-color: var(--attention-bg); }
+      /* A second, half as bright pulse right after the first. */
+      35.1% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--attention) 50%, transparent); }
+      70% { background-color: var(--attention-bg); box-shadow: 0 0 0 8px transparent; }
       100% { background-color: var(--attention-rest, var(--figma-color-bg-secondary, #F5F5F5)); box-shadow: 0 0 0 0 transparent; }
     }
     @keyframes attention-wiggle {
@@ -468,6 +470,15 @@
       padding-left: var(--spacer-3);
       color: var(--figma-color-text-secondary);
     }
+    /* EXPERIMENTAL: prefill-from-old-cover (start) */
+    #project-team-report,
+    #done-project-team-list {
+      margin: 0;
+      padding-left: var(--spacer-3);
+      color: var(--figma-color-text-secondary);
+    }
+    #project-team-report:empty { display: none; }
+    /* EXPERIMENTAL: prefill-from-old-cover (end) */
   </style>
 </head>
 <body>
@@ -570,8 +581,10 @@
           <fig-checkbox name="product" value="RMS" label="RMS"></fig-checkbox>
           <fig-checkbox name="product" value="Guest Portal" label="Guest Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Payment Portal" label="Payment Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Checkout Portal" label="Checkout Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Owner Portal" label="Owner Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Executor Portal" label="Executor Portal"></fig-checkbox>
+          <fig-checkbox name="product" value="Contractor Portal" label="Contractor Portal"></fig-checkbox>
           <fig-checkbox name="product" value="Media Library" label="Media Library"></fig-checkbox>
           <fig-checkbox name="product" value="Butler" label="Butler"></fig-checkbox>
           <fig-checkbox id="product-other" name="product" value="Other" label="Other"></fig-checkbox>
@@ -586,6 +599,14 @@
         <p class="section-label">External access</p>
         <fig-switch id="external-access" label="(Could be) Accessible externally"></fig-switch>
       </fig-stack>
+
+      <!-- EXPERIMENTAL: prefill-from-old-cover (start)
+           DEBUG_PREFILL in code.ts: what the last pre-fill from the old cover did, per field. -->
+      <aside class="dev-panel" id="prefill-debug" hidden>
+        <strong id="prefill-debug-title">Pre-fill debug</strong>
+        <pre id="prefill-debug-log" style="margin: 0; white-space: pre-wrap; font: 10px/1.4 ui-monospace, Menlo, monospace;"></pre>
+      </aside>
+      <!-- EXPERIMENTAL: prefill-from-old-cover (end) -->
 
       <!-- Stays at the bottom of the window when the form is taller than it (see .sticky-actions). -->
       <div class="sticky-actions">
@@ -637,13 +658,6 @@
         <span>Plug-in can't set thumbnails in FigJam. Right click and 'Set as thumbnail' manually.</span>
       </p>
       </div>
-      <!-- Warnings from creating the file, e.g. pages skipped because the file already has them. -->
-      <ul id="done-warnings"></ul>
-      <!-- What was done to the file's existing pages (renames, removed dividers, moves). -->
-      <fig-stack id="done-cleanup" direction="vertical" gap="1" full hidden>
-        <p class="section-label">Clean-up actions</p>
-        <ul id="done-cleanup-list"></ul>
-      </fig-stack>
       <!-- Hidden when the file already has the suggested name. -->
       <fig-stack id="rename" direction="vertical" gap="1" full>
         <p class="section-label" id="rename-label">Rename your file to</p>
@@ -658,9 +672,41 @@
           </fig-button>
         </div>
       </fig-stack>
+      <!-- Warnings from creating the file's structure, e.g. pages skipped because the file already has them. -->
+      <fig-stack id="done-structure" direction="vertical" gap="1" full hidden>
+        <p class="section-label">Structure</p>
+        <ul id="done-warnings"></ul>
+      </fig-stack>
+      <!-- What was done to the file's existing pages (renames, removed dividers, moves). -->
+      <fig-stack id="done-cleanup" direction="vertical" gap="1" full hidden>
+        <p class="section-label">Clean-up actions</p>
+        <ul id="done-cleanup-list"></ul>
+      </fig-stack>
+      <!-- EXPERIMENTAL: prefill-from-old-cover (start)
+           What filling the Project Team from the old cover did, right after Create. -->
+      <fig-stack id="done-project-team" direction="vertical" gap="1" full hidden>
+        <p class="section-label">Project team</p>
+        <ul id="done-project-team-list"></ul>
+      </fig-stack>
+      <!-- EXPERIMENTAL: prefill-from-old-cover (end) -->
       <!-- Only when pages were skipped: runs Create with the same values again,
            e.g. after deleting or renaming the pages that were in the way. -->
       <fig-button id="create-again" size="large" full hidden>Re-create file structure</fig-button>
+
+      <!-- EXPERIMENTAL: prefill-from-old-cover (start)
+           Only shown when PREFILL_FROM_OLD_COVER is on in code.ts: on the done page, and on the
+           File type step while the file has an old cover (moved there by placeProjectTeam). -->
+      <aside id="project-team" class="dev-panel" hidden>
+        <div class="dev-panel-header">
+          <strong>Project team (EXPERIMENTAL)</strong>
+          <fig-button id="project-team-run" variant="secondary" size="small">Fill project team</fig-button>
+        </div>
+        <p class="dev-panel-note" id="project-team-status">
+          Adds the people from the old cover on the thumbnail page to the new cover's Project Team.
+        </p>
+        <ul id="project-team-report"></ul>
+      </aside>
+      <!-- EXPERIMENTAL: prefill-from-old-cover (end) -->
     </section>
 
     <!-- Only shown when DEBUG is on in code.ts. -->
@@ -742,6 +788,7 @@
       document.body.dataset.nav = 'back';
       stepDetails.hidden = true;
       stepType.hidden = false;
+      placeProjectTeam('type'); // EXPERIMENTAL: prefill-from-old-cover
       updateDebug();
       stepType.querySelector(`[data-type="${previous}"]`)?.focus();
     }
@@ -1254,6 +1301,111 @@
       flashLabel($('#file-name-copy-label'), copyText($('#file-name').textContent) ? 'Copied' : 'Copy failed');
     });
 
+    // EXPERIMENTAL: prefill-from-old-cover (start)
+    // "Fill project team" box (DEBUG_PREFILL in code.ts), to run it by hand: on the done
+    // page, and on the File type step while the file has an old cover (an "OLD Thumbnail"
+    // section on its thumbnail page; the plugin keeps that up to date). One box, moved to
+    // the step. Its report goes in the box; the automatic run after Create reports on the
+    // done page instead ("Project team", see showProjectTeamAuto).
+    let projectTeamEnabled = false;
+    let oldCoverFound = false;
+    const projectTeamBox = $('#project-team');
+    const PROJECT_TEAM_NOTE = $('#project-team-status').textContent.trim();
+    const projectTeamRun = $('#project-team-run');
+    projectTeamRun.addEventListener('click', () => {
+      if (projectTeamRun.hasAttribute('disabled')) return;
+      projectTeamRun.setAttribute('disabled', '');
+      $('#project-team-status').textContent = 'Filling…';
+      $('#project-team-report').replaceChildren();
+      post({ type: 'fill-project-team' });
+    });
+    function showProjectTeam(lines) {
+      projectTeamRun.removeAttribute('disabled');
+      $('#project-team-status').textContent = 'Done.';
+      $('#project-team-report').replaceChildren(
+        ...lines.map((line) => {
+          const li = document.createElement('li');
+          li.textContent = line;
+          return li;
+        }),
+      );
+    }
+    // Puts the box on `step` ('type' or 'done') as it was before any run. On the File
+    // type step it only shows while the file has an old cover.
+    function placeProjectTeam(step) {
+      (step === 'type' ? stepType : $('#step-done')).append(projectTeamBox);
+      projectTeamBox.hidden = !projectTeamEnabled || (step === 'type' && !oldCoverFound);
+      $('#project-team-status').textContent = PROJECT_TEAM_NOTE;
+      $('#project-team-report').replaceChildren();
+      // A new done page: the automatic run's report comes after (see showProjectTeamAuto).
+      if (step === 'done') $('#done-project-team').hidden = true;
+    }
+    // What the automatic run after Create did, under "Project team" on the done page.
+    function showProjectTeamAuto(lines) {
+      $('#done-project-team-list').replaceChildren(
+        ...lines.map((line) => {
+          const li = document.createElement('li');
+          li.textContent = line;
+          return li;
+        }),
+      );
+      $('#done-project-team').hidden = false;
+    }
+
+    // Pre-fills the form from the file's old cover (the plugin reads it when it finds one,
+    // and only sends values that pass the form's checks): only fields the user hasn't
+    // edited, and only before the first Create (after that, the form keeps what was
+    // submitted). Products: only the ones the list has; others are ignored.
+    const editedByUser = new Set();
+    for (const id of ['name', 'contributors', 'github-issue-url']) {
+      $(`#${id}`).addEventListener('input', () => editedByUser.add(id));
+    }
+    productGroup.addEventListener('change', () => editedByUser.add('products'));
+    const comparableName = (text) => String(text).normalize('NFD').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+    // The products ticked by the last pre-fill (a newer one replaces them).
+    let prefilledProducts = [];
+    // DEBUG_PREFILL (code.ts): the debug box shows what the last pre-fill did, one line per field.
+    let prefillDebugEnabled = false;
+    function showPrefillDebug(lines) {
+      if (!prefillDebugEnabled) return;
+      $('#prefill-debug').hidden = false;
+      $('#prefill-debug-title').textContent = `Pre-fill debug · ${new Date().toLocaleTimeString()}`;
+      $('#prefill-debug-log').textContent = lines.join('\n');
+    }
+
+    function prefillFromOldCover(values) {
+      if (lastData) return showPrefillDebug(['Nothing filled: Create was already clicked.']);
+      const lines = [];
+      const texts = [['Title', 'name', values.name], ['Contributors', 'contributors', values.contributors], ['GitHub link', 'github-issue-url', values.githubIssueUrl]];
+      for (const [label, id, value] of texts) {
+        if (!value) lines.push(`${label}: none on the old cover`);
+        else if (editedByUser.has(id)) lines.push(`${label}: kept yours`);
+        else {
+          $(`#${id}`).value = value;
+          refresh(id);
+          lines.push(`${label}: "${value}"`);
+        }
+      }
+      // Where the product came from (only with DEBUG_PREFILL), e.g. "badge: App=PMS".
+      const source = values.productTrace?.length ? ` (${values.productTrace.join('; ')})` : '';
+      if (!values.products?.length) lines.push(`Product: none on the old cover${source}`);
+      else if (editedByUser.has('products')) lines.push('Product: kept yours');
+      else {
+        const products = [...productGroup.querySelectorAll('fig-checkbox')].filter((checkbox) => checkbox !== otherCheckbox);
+        for (const checkbox of prefilledProducts) checkbox.checked = false;
+        prefilledProducts = products.filter((checkbox) =>
+          values.products.some((product) => comparableName(product) === comparableName(checkbox.value)),
+        );
+        for (const checkbox of prefilledProducts) checkbox.checked = true;
+        lines.push(prefilledProducts.length
+          ? `Product: ticked ${prefilledProducts.map((checkbox) => checkbox.value).join(', ')}${source}`
+          : `Product: ${values.products.join(', ')} isn't in the list${source}`);
+      }
+      updateDebug();
+      showPrefillDebug(lines);
+    }
+    // EXPERIMENTAL: prefill-from-old-cover (end)
+
     // Step 2 -> step 3, once the plugin has built the file.
     // fileName is null when the file already has the suggested name.
     // changed is false when every page was skipped: "No changes applied" instead of success.
@@ -1284,6 +1436,7 @@
         void reminder.offsetWidth; // restart the animation
         reminder.classList.add('attention');
       }
+      $('#done-structure').hidden = warnings.length === 0;
       $('#done-warnings').replaceChildren(
         ...warnings.map((warning) => {
           const li = document.createElement('li');
@@ -1302,6 +1455,7 @@
         void fileNameRow.offsetWidth; // restart the animation
         fileNameRow.classList.add('attention');
       }
+      placeProjectTeam('done'); // EXPERIMENTAL: prefill-from-old-cover
       document.body.dataset.nav = 'forward';
       stepDetails.hidden = true;
       $('#step-done').hidden = false;
@@ -1311,6 +1465,16 @@
     window.addEventListener('message', (event) => {
       const msg = event.data?.pluginMessage;
       if (msg?.type === 'capture-result') showCapture(msg);
+      // EXPERIMENTAL: prefill-from-old-cover (start)
+      if (msg?.type === 'project-team-result') showProjectTeam(msg.lines ?? []);
+      if (msg?.type === 'project-team-auto') showProjectTeamAuto(msg.lines ?? []);
+      // Whether the file has an old cover, now and whenever that changes.
+      if (msg?.type === 'old-cover') {
+        oldCoverFound = !!msg.found;
+        if (!stepType.hidden) placeProjectTeam('type');
+      }
+      if (msg?.type === 'old-cover-values') prefillFromOldCover(msg.values ?? {});
+      // EXPERIMENTAL: prefill-from-old-cover (end)
       // The plugin shows the error itself; just make the form usable again.
       if (msg?.type === 'create-failed') setCreating(false);
       if (msg?.type === 'created') showCreated(msg.fileName, msg.changed, msg.skipped, msg.warnings, msg.cleanup, msg.backedUp);
@@ -1337,6 +1501,8 @@
       }
       if (msg.templates) showTemplates(msg.templates);
       if (msg.features?.capture) $('#capture').hidden = false;
+      projectTeamEnabled = !!msg.features?.projectTeamBox; // EXPERIMENTAL: prefill-from-old-cover
+      prefillDebugEnabled = !!msg.features?.debugPrefill; // EXPERIMENTAL: prefill-from-old-cover
       debugEnabled = !!msg.features?.debug;
       // FigJam: never a File type list; the (only) FigJam template's form right away, without a slide-in.
       if (msg.editor === 'figjam' && msg.templates?.length) {
@@ -1352,6 +1518,7 @@
         delete document.body.dataset.nav;
       } else {
         stepType.hidden = false;
+        placeProjectTeam('type'); // EXPERIMENTAL: prefill-from-old-cover
       }
       if (msg.version) {
         $('#version').textContent = msg.version;

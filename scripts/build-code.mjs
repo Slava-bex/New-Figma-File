@@ -1,4 +1,4 @@
-/* global console, process, Buffer */
+/* global console, process, Buffer, setTimeout, clearTimeout */
 // Builds the plugin code: bundles code.ts (and src/) into code.js.
 //
 // - The plugin version comes from package.json ("version") and is injected as
@@ -14,14 +14,15 @@
 //
 // Pass --watch to rebuild on changes (including added/removed templates).
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, watch } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const templatesDir = join(root, 'templates');
-const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const readVersion = () => JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+const version = readVersion();
 const { name: pluginName } = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 
 function readJson(path) {
@@ -89,7 +90,7 @@ async function reportTemplateChecks() {
   }
 }
 
-const options = {
+const optionsFor = (version) => ({
   entryPoints: [join(root, 'code.ts')],
   outfile: join(root, 'code.js'),
   bundle: true,
@@ -97,7 +98,8 @@ const options = {
   logLevel: 'warning',
   define: { __PLUGIN_VERSION__: JSON.stringify(version), __PLUGIN_NAME__: JSON.stringify(pluginName) },
   plugins: [templateImporter],
-};
+});
+const options = optionsFor(version);
 
 if (process.argv.includes('--watch')) {
   // While watching, template problems are printed on every rebuild but don't stop it.
@@ -109,9 +111,34 @@ if (process.argv.includes('--watch')) {
         await reportTemplateChecks();
       }),
   };
-  const ctx = await esbuild.context({ ...options, plugins: [...options.plugins, checkOnRebuild] });
-  await ctx.watch();
-  console.log(`[build-code] watching (v${version})…`);
+  const startWatching = async (version) => {
+    const context = await esbuild.context({ ...optionsFor(version), plugins: [templateImporter, checkOnRebuild] });
+    await context.watch();
+    console.log(`[build-code] watching (v${version})…`);
+    return context;
+  };
+  let watchedVersion = version;
+  let ctx = await startWatching(version);
+
+  // A new version in package.json: the version is built into the code, so watch again
+  // with the new one. (The folder is watched, as editors may replace the file on save.)
+  let timer;
+  watch(root, (_event, file) => {
+    if (file !== 'package.json') return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      let next;
+      try {
+        next = readVersion();
+      } catch {
+        return; // half-written while saving; the next change event follows
+      }
+      if (!next || next === watchedVersion) return;
+      watchedVersion = next;
+      await ctx.dispose();
+      ctx = await startWatching(next);
+    }, 100);
+  });
 } else {
   // A template that can't be built stops the build, so it never reaches users.
   if (await reportTemplateChecks()) {

@@ -129,9 +129,26 @@ export async function missingThumbnailFields(): Promise<ThumbnailField[] | null>
 
 /** Whether a GitHub link (a Project Link set to Source=GitHub) is in `root`, which the link filler fills. */
 export async function hasGithubLink(root: SceneNode): Promise<boolean> {
-  return (await findInstances(root, GITHUB_LINK)).some(
-    (link) => link.componentProperties[GITHUB_LINK.properties.source]?.value === 'GitHub',
-  );
+  for (const link of await findInstances(root, GITHUB_LINK)) {
+    if ((await variantValue(link, GITHUB_LINK.properties.source)) === 'GitHub') return true;
+  }
+  return false;
+}
+
+/**
+ * An instance's variant property value, e.g. "GitHub" for Source, from its variant's
+ * name ("Source=GitHub, Size=Default"). Read from the name rather than
+ * componentProperties, which Figma refuses for a component set with errors (e.g. in an
+ * old or misconfigured library); the name always works. Undefined if it has no such variant.
+ */
+export async function variantValue(instance: InstanceNode, property: string): Promise<string | undefined> {
+  const main = await instance.getMainComponentAsync().catch(() => null);
+  if (main?.parent?.type !== 'COMPONENT_SET') return undefined;
+  for (const pair of main.name.split(',')) {
+    const [name, ...value] = pair.split('=');
+    if (value.length && name.trim() === property) return value.join('=').trim();
+  }
+  return undefined;
 }
 
 // ---- Finding instances ----

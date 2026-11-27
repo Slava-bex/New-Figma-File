@@ -28,8 +28,10 @@ Run through this before publishing, and after bigger changes. Use copies of real
 - [ ] Existing dividers are reused; extra ones are removed ("Removed N extra dividers").
 - [ ] Pages the template doesn't use end up before the first divider after the main design page.
 - [ ] Subpages (names starting with 2+ spaces) stay under their parent, in order, with their own spacing ("Moved 'Archive' (with N subpages)").
+- [ ] Orphan subpages (right after a divider) lose their leading spaces and become normal pages ("Removed leading spaces from 'X'").
 - [ ] An empty reused page gets the template's content and background.
 - [ ] An old "Thumbnail" or "Cover" page: its old content moves into an "OLD Thumbnail" section to the right of the new cover.
+- [ ] Old pages with fonts the plugin doesn't load (e.g. Caecilia LT Pro in Guest Portal): the run completes and the pages end up in template order. Anything Figma refuses to move is listed in clean-up ("Couldn't move…", "Kept old content…").
 - [ ] No content is lost anywhere.
 - [ ] Version history has "Before file structure change", with the plugin name and version in the description. Restoring it brings the file back as it was.
 - [ ] The success message ends with "Backup stored in Version history."
@@ -60,4 +62,5 @@ Run through this before publishing, and after bigger changes. Use copies of real
 ## Before publishing
 
 - [ ] `CAPTURE = false` and `DEBUG = false` in `code.ts`.
+- [ ] `PREFILL_FROM_OLD_COVER = false` and `DEBUG_PREFILL = false` in `code.ts`. <!-- EXPERIMENTAL: prefill-from-old-cover -->
 - [ ] `npm run build` passes.

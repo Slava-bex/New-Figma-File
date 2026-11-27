@@ -87,9 +87,18 @@ export function setLink(node: TextNode, url: string) {
   node.hyperlink = { type: 'URL', value: url };
 }
 
-/** Whether the instance has a component property with this id (see setProperties). */
-export const hasProperty = (instance: InstanceNode, id: string) =>
-  Object.keys(instance.componentProperties).some((k) => k === id || k.endsWith(`#${id}`));
+/**
+ * Whether the instance has a component property with this id (see setProperties). False
+ * when Figma can't read its properties (a component set with errors), so the property
+ * is left alone instead of breaking Create.
+ */
+export function hasProperty(instance: InstanceNode, id: string): boolean {
+  try {
+    return Object.keys(instance.componentProperties).some((k) => k === id || k.endsWith(`#${id}`));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Sets component properties by their id, e.g. { '829:1': 'Foo' } for "Title#829:1",

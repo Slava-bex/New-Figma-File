@@ -1,4 +1,4 @@
-/* global console, process */
+/* global console, process, setTimeout, clearTimeout */
 // Builds the plugin UI.
 //
 // Figma loads the plugin UI as a single HTML string, so it can't fetch local

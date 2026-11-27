@@ -25,6 +25,8 @@ import {
 import type { NewFileData } from '../types';
 import { FILLERS } from './fillers';
 import { isInstanceOf, THUMBNAIL, type LibraryComponent } from '../library';
+import { namesMatch } from '../name-matching';
+import { isOldThumbnailSection, isThumbnailPageName, OLD_THUMBNAIL_SECTION } from '../thumbnail-page';
 import { DISPLAY_VERSION, PLUGIN_NAME } from '../version';
 import { fileNameFor, nameFor } from '../placeholders';
 import { CreateContext, placeComponent, setFileThumbnail, solid, type Parent } from './helpers';
@@ -76,6 +78,10 @@ export async function createFile(data: NewFileData): Promise<{
   const notices: string[] = [];
   // What was done to the file's existing pages: renames, removed dividers, moves.
   const cleanup: string[] = [];
+  // Subpages without a parent become normal pages first (see trimOrphanSubpages).
+  for (const page of trimOrphanSubpages(ctx, originalOrder)) {
+    cleanup.push(`Removed leading spaces from '${page.name}'`);
+  }
   // The file's groups as they were: each subpage's parent page (see fileGroups).
   const fileParent = fileGroups(originalOrder);
   // The template's structure: each template page's parent page (index), or null.
@@ -126,9 +132,13 @@ export async function createFile(data: NewFileData): Promise<{
         // - an old thumbnail page (the template's thumbnail page, without the current
         //   thumbnail) gets the new content, its old content kept in an "OLD Thumbnail"
         //   section to the right of it. Content already in such a section (from an
-        //   earlier run) isn't wrapped again (see thumbnailPageState).
+        //   earlier run) isn't wrapped again (see thumbnailPageState). If Figma refuses
+        //   to move the old content (see wrapOldContent), it stays in place, right of
+        //   the new content.
         let origin: { x: number; y: number } | null = null;
         let oldSection: SectionNode | null = null;
+        // Old content that couldn't be wrapped and stays in place: the new content goes left of it.
+        let keptOldContent: ReturnType<typeof contentBounds> | null = null;
         if (kind === 'exact' || kind === 'similar') {
           await page.loadAsync();
           const hasContent = (def.content ?? []).length > 0;
@@ -145,8 +155,15 @@ export async function createFile(data: NewFileData): Promise<{
             // The new cover goes where the old content was; the section moves aside.
             ({ section: oldSection, origin } = existingOldSection(ctx, page));
           } else if (thumbnailState === 'old') {
-            ({ section: oldSection, origin } = wrapOldContent(ctx, page));
-            cleanup.push(`Moved old content of '${page.name.trimStart()}' to section '${OLD_THUMBNAIL_SECTION}'`);
+            const wrapped = wrapOldContent(ctx, page);
+            if (wrapped) {
+              ({ section: oldSection, origin } = wrapped);
+              cleanup.push(`Moved old content of '${page.name.trimStart()}' to section '${OLD_THUMBNAIL_SECTION}'`);
+            } else {
+              keptOldContent = contentBounds(page);
+              origin = { x: keptOldContent.left, y: keptOldContent.top };
+              cleanup.push(`Kept old content of '${page.name.trimStart()}' in place: couldn't move it into a section`);
+            }
           }
           if (def.background) {
             const oldBackgrounds = page.backgrounds;
@@ -165,6 +182,7 @@ export async function createFile(data: NewFileData): Promise<{
           origin: origin ?? startOfFreeSpace(page, gap),
         });
         if (oldSection) placeRightOf(oldSection, placed, gap);
+        if (keptOldContent) placeLeftOf(placed, keptOldContent, gap);
         // Put the form data into whatever library components were placed.
         let placedThumbnail = false;
         for (const node of placed) {
@@ -201,8 +219,9 @@ export async function createFile(data: NewFileData): Promise<{
     const keptBefore = originalOrder.filter((p) => !p.removed && !p.isPageDivider && !fileParent.has(p));
     const groups = groupsAfterRun(entries, originalOrder, fileParent);
     const mainTop = entries.find((e) => e.page === mainPage)?.parent ?? mainPage;
-    arrangePages(entries, groups, mainTop, originalOrder, fileParent);
-    for (const page of movedPages(keptBefore)) {
+    const stuck = arrangePages(entries, groups, mainTop, originalOrder, fileParent);
+    for (const page of stuck) cleanup.push(`Couldn't move '${page.name.trimStart()}': Figma refused (e.g. a font it uses isn't loaded)`);
+    for (const page of movedPages(keptBefore).filter((p) => !stuck.includes(p))) {
       const subpages = groups.get(page)?.length ?? 0;
       const along = subpages === 0 ? '' : subpages === 1 ? ' (with 1 subpage)' : ` (with ${subpages} subpages)`;
       cleanup.push(`Moved '${page.name.trimStart()}'${along}`);
@@ -319,19 +338,10 @@ function pageOf(node: BaseNode | null): PageNode | null {
 
 // ---- Old thumbnail pages ----
 
-const OLD_THUMBNAIL_SECTION = 'OLD Thumbnail';
+// Thumbnail pages and "OLD Thumbnail" sections are recognised as in src/thumbnail-page.ts.
+
 /** Space between the old content and the edges of its section. */
 const OLD_SECTION_PADDING = 100;
-
-/**
- * Thumbnail pages are recognised by name only (whatever is on them): "thumbnail" or
- * "cover", ignoring capitals, emojis and spacing, e.g. "📷  Thumbnail" or "🖼 Cover".
- */
-const THUMBNAIL_PAGE_NAMES = ['thumbnail', 'cover'];
-const isThumbnailPageName = (name: string) => THUMBNAIL_PAGE_NAMES.includes(looseName(name));
-
-const isOldSection = (node: SceneNode): node is SectionNode =>
-  node.type === 'SECTION' && node.name === OLD_THUMBNAIL_SECTION;
 
 /**
  * What an existing thumbnail page (with content) needs:
@@ -343,8 +353,8 @@ const isOldSection = (node: SceneNode): node is SectionNode =>
  * - 'old': an old cover: its content is wrapped into an "OLD Thumbnail" section.
  */
 async function thumbnailPageState(page: PageNode): Promise<'current' | 'only-old' | 'old'> {
-  const hasOldSection = page.children.some(isOldSection);
-  if (hasOldSection && page.children.every(isOldSection)) return 'only-old';
+  const hasOldSection = page.children.some(isOldThumbnailSection);
+  if (hasOldSection && page.children.every(isOldThumbnailSection)) return 'only-old';
   if (hasOldSection || (await firstInstanceOf(page, THUMBNAIL)) !== null) return 'current';
   return 'old';
 }
@@ -354,7 +364,7 @@ async function thumbnailPageState(page: PageNode): Promise<'current' | 'only-old
  * and where its content starts (for the new content). The move is undone on rollback.
  */
 function existingOldSection(ctx: CreateContext, page: PageNode) {
-  const section = page.children.filter(isOldSection).sort((a, b) => a.x - b.x)[0];
+  const section = page.children.filter(isOldThumbnailSection).sort((a, b) => a.x - b.x)[0];
   const { x, y } = section;
   ctx.onRollback(() => {
     if (section.removed) return;
@@ -364,17 +374,39 @@ function existingOldSection(ctx: CreateContext, page: PageNode) {
   return { section, origin: { x: x + OLD_SECTION_PADDING, y: y + OLD_SECTION_PADDING } };
 }
 
+/** The area everything on `page` covers. */
+function contentBounds(page: PageNode) {
+  const nodes = page.children;
+  return {
+    left: Math.min(...nodes.map((n) => n.x)),
+    top: Math.min(...nodes.map((n) => n.y)),
+    right: Math.max(...nodes.map((n) => n.x + n.width)),
+    bottom: Math.max(...nodes.map((n) => n.y + n.height)),
+  };
+}
+
+/** Puts `nodes` back onto `page` at their original index and position. */
+function putBack(page: PageNode, nodes: { node: SceneNode; index: number; x: number; y: number }[]) {
+  for (const { node, index, x, y } of nodes) {
+    if (node.removed) continue;
+    page.insertChild(index, node);
+    node.x = x;
+    node.y = y;
+  }
+}
+
 /**
  * Moves everything on `page` into a new "OLD Thumbnail" section, keeping where it
  * all is. Returns the section and where the old content started (for the new
  * content). Undone on rollback: the content goes back onto the page.
+ *
+ * Returns null when Figma refuses to move part of it (e.g. text whose font isn't
+ * loaded: the old content's fonts are deliberately not loaded, as it isn't edited).
+ * Then nothing is moved: the content stays on the page as it was, in one piece.
  */
 function wrapOldContent(ctx: CreateContext, page: PageNode) {
-  const nodes = [...page.children];
-  const left = Math.min(...nodes.map((n) => n.x));
-  const top = Math.min(...nodes.map((n) => n.y));
-  const right = Math.max(...nodes.map((n) => n.x + n.width));
-  const bottom = Math.max(...nodes.map((n) => n.y + n.height));
+  const { left, top, right, bottom } = contentBounds(page);
+  const original = page.children.map((node, index) => ({ node, index, x: node.x, y: node.y }));
 
   const section = ctx.track(figma.createSection());
   page.appendChild(section);
@@ -383,23 +415,35 @@ function wrapOldContent(ctx: CreateContext, page: PageNode) {
   section.y = top - OLD_SECTION_PADDING;
   section.resizeWithoutConstraints(right - left + 2 * OLD_SECTION_PADDING, bottom - top + 2 * OLD_SECTION_PADDING);
 
-  const original = nodes.map((node) => ({ node, x: node.x, y: node.y }));
-  for (const { node, x, y } of original) {
-    section.appendChild(node);
-    // Inside a section, positions are relative to it.
-    node.x = x - section.x;
-    node.y = y - section.y;
+  const moved: typeof original = [];
+  try {
+    for (const entry of original) {
+      section.appendChild(entry.node);
+      moved.push(entry);
+      // Inside a section, positions are relative to it.
+      entry.node.x = entry.x - section.x;
+      entry.node.y = entry.y - section.y;
+    }
+  } catch (error) {
+    console.warn(`Couldn't move the old content of "${page.name}" into a section; it stays in place.`, error);
+    putBack(page, moved);
+    section.remove();
+    return null;
   }
   // Registered after the section's own removal, so it runs before it (rollback runs in reverse).
-  ctx.onRollback(() => {
-    original.forEach(({ node, x, y }, index) => {
-      if (node.removed) return;
-      page.insertChild(index, node);
-      node.x = x;
-      node.y = y;
-    });
-  });
+  ctx.onRollback(() => putBack(page, original));
   return { section, origin: { x: left, y: top } };
+}
+
+/** Moves `nodes` (the new content) to the left of `bounds` (old content), top-aligned with it. */
+function placeLeftOf(nodes: SceneNode[], bounds: { left: number; top: number }, gap: number) {
+  if (nodes.length === 0) return;
+  const dx = bounds.left - gap - Math.max(...nodes.map((n) => n.x + n.width));
+  const dy = bounds.top - Math.min(...nodes.map((n) => n.y));
+  for (const node of nodes) {
+    node.x += dx;
+    node.y += dy;
+  }
 }
 
 /** Moves `section` to the right of `nodes`, top-aligned with them. */
@@ -411,33 +455,10 @@ function placeRightOf(section: SectionNode, nodes: SceneNode[], gap: number) {
 
 // ---- Pages ----
 
-// Emojis: keycaps (like the "1" and "#" keycap emojis) as a whole, pictographs, skin
-// tones, country flags, the tag characters of flags like England's, and the joiners and
-// text/emoji style selectors between parts. Digits, # and * are only removed as part
-// of a keycap.
-const EMOJI =
-  /[0-9#*]\ufe0f?\u20e3|\p{Extended_Pictographic}|\p{Emoji_Modifier}|\p{Regional_Indicator}|[\u{E0020}-\u{E007F}]|\u200d|\ufe0e|\ufe0f|\u20e3/gu;
-
-/**
- * Everything but letters and numbers (with their accents): symbols like "❖" or "↪",
- * punctuation like ":" or "-", and spacing.
- */
-const NOT_LETTER_OR_NUMBER = /[^\p{L}\p{M}\p{N}]/gu;
-
-/**
- * A page name as letters and numbers only, without capitals, e.g.
- * "🚧  Concept: X" → "conceptx", "❖  Local components" → "localcomponents".
- * Emojis go first, so a keycap like "1️⃣" doesn't leave its digit behind.
- */
-const looseName = (name: string) => name.replace(EMOJI, '').replace(NOT_LETTER_OR_NUMBER, '').toLowerCase();
-
-/** Same name apart from capitals, emojis, symbols, punctuation and spacing (e.g. "🧩 Local Components" and "❖ Local components"). */
-const similarName = (a: string, b: string) => looseName(a) !== '' && looseName(a) === looseName(b);
-
 /**
  * The page for a definition, and how it was found:
  * - "exact": the file has a page with exactly that name; it's reused as it is,
- * - "similar": the file has a page with a similar name (see similarName); it's renamed,
+ * - "similar": the file has a page with a similar name (see namesMatch); it's renamed,
  * - "takeover": for the template's main design page, the file's "Page 1"; renamed, its content stays,
  * - "new": a new page, unless `mayCreate` is false: then null, and no page is made.
  * Only "takeover" and "new" pages get the template's background and content.
@@ -469,7 +490,7 @@ async function ensurePage(
   // A thumbnail page also matches the file's page of the other thumbnail name
   // (e.g. "Cover" for "📷  Thumbnail"), after any page of its own name.
   const similar =
-    available.find((p) => similarName(p.name, name)) ??
+    available.find((p) => namesMatch(p.name, name)) ??
     (isThumbnailPageName(name) ? available.find((p) => isThumbnailPageName(p.name)) : undefined);
   if (similar) {
     ctx.claimedPages.add(similar);
@@ -483,7 +504,7 @@ async function ensurePage(
   }
 
   // "Page 1" is a top-level page, so only a top-level main design page takes it over.
-  const page1 = isMain && !subpage ? available.find((p) => similarName(p.name, DEFAULT_PAGE_NAME)) : undefined;
+  const page1 = isMain && !subpage ? available.find((p) => namesMatch(p.name, DEFAULT_PAGE_NAME)) : undefined;
   if (!page1 && !mayCreate) return null;
   let page: PageNode;
   let oldName: string | undefined;
@@ -519,6 +540,26 @@ interface Entry {
  * or divider. A group ends at the next top-level page or divider; a subpage without
  * a page above it in its group counts as a top-level page.
  */
+/**
+ * Orphan subpages: pages named like subpages (2+ leading spaces) with no page above
+ * them in their group, i.e. right after a divider (or at the start of the file),
+ * possibly after other orphans. Their leading spaces are removed, so they become
+ * normal pages (and can match the template's pages). Undone on rollback. Returns
+ * the renamed pages.
+ */
+function trimOrphanSubpages(ctx: CreateContext, order: PageNode[]): PageNode[] {
+  const parentOf = fileGroups(order);
+  const orphans = order.filter((page) => !page.isPageDivider && isSubpageName(page.name) && !parentOf.has(page));
+  for (const page of orphans) {
+    const oldName = page.name;
+    page.name = oldName.trimStart();
+    ctx.onRollback(() => {
+      if (!page.removed) page.name = oldName;
+    });
+  }
+  return orphans;
+}
+
 function fileGroups(order: PageNode[]): Map<PageNode, PageNode> {
   const parentOf = new Map<PageNode, PageNode>();
   let parent: PageNode | null = null;
@@ -611,9 +652,48 @@ function arrangePages(
   const order = [...new Set([...withGroups(ordered.slice(0, at)), ...withGroups(others), ...withGroups(ordered.slice(at))])];
   // Anything not placed yet (shouldn't happen) keeps its place at the end.
   for (const page of figma.root.children) if (!order.includes(page)) order.push(page);
-  order.forEach((page, index) => {
-    if (figma.root.children[index] !== page) figma.root.insertChild(index, page);
-  });
+  return applyPageOrder(order);
+}
+
+/**
+ * Puts the pages in `order`, each one right after the one before it. Figma can refuse
+ * to move a page (e.g. "unloaded font" for text on it: the plugin doesn't load the
+ * fonts of content it doesn't edit). That page stays where it is, and the pages after
+ * it in `order` line up after it. Returns the pages that couldn't be moved.
+ */
+function applyPageOrder(order: PageNode[]): PageNode[] {
+  const stuck: PageNode[] = [];
+  let previous: PageNode | null = null;
+  for (const page of order) {
+    if (page.removed) continue;
+    const isInPlace = () => {
+      const pages = figma.root.children;
+      return previous ? pages[pages.indexOf(previous) + 1] === page : pages[0] === page;
+    };
+    if (!isInPlace()) {
+      const target = previous ? figma.root.children.indexOf(previous) + 1 : 0;
+      // Moving forward, the index may or may not count the page itself (and the
+      // end may then be out of range): one step less fixes either case.
+      const movesForward = figma.root.children.indexOf(page) < target;
+      try {
+        try {
+          figma.root.insertChild(target, page);
+        } catch (error) {
+          if (!movesForward) throw error;
+        }
+        if (!isInPlace() && movesForward) figma.root.insertChild(target - 1, page);
+        if (!isInPlace()) throw new Error('page ended up elsewhere');
+      } catch (error) {
+        console.warn(`Couldn't move page "${page.name}"; it stays in place.`, error);
+        stuck.push(page);
+      }
+    }
+    previous = page;
+  }
+  // A page that couldn't move may still have ended up in place, as the others moved around it.
+  const final = figma.root.children.filter((page) => order.includes(page));
+  const wanted = order.filter((page) => !page.removed);
+  return final.every((page, index) => page === wanted[index]) ? [] : stuck;
 }
 
 /**
@@ -643,9 +723,7 @@ function movedPages(before: PageNode[]): PageNode[] {
 }
 
 function restorePageOrder(order: PageNode[]) {
-  order.forEach((page, index) => {
-    if (!page.removed) figma.root.insertChild(index, page);
-  });
+  applyPageOrder(order);
 }
 
 /** Where new content starts on a page: next to anything already there. */

@@ -6,6 +6,7 @@
 // Components, properties and layers are found by id (see src/library.ts).
 
 import { findInstances, PRODUCT, THUMBNAIL } from '../../library';
+import { namesMatch } from '../../name-matching';
 import { hasProperty, hide, setProperties, variantOptions } from '../helpers';
 import type { Filler } from '.';
 
@@ -59,7 +60,8 @@ async function fillProduct(pill: InstanceNode, products: string[]) {
   }
   const { product, customName } = PRODUCT.properties;
   const options = await variantOptions(pill, product);
-  const known = products.length === 1 ? options.find((o) => o.toLowerCase() === products[0].toLowerCase()) : undefined;
+  // Matched like page names (see namesMatch): capitals, emojis, symbols, punctuation and spacing don't count.
+  const known = products.length === 1 ? options.find((o) => namesMatch(o, products[0])) : undefined;
   if (known) {
     await setProperties(pill, { [product]: known });
   } else {

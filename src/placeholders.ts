@@ -2,6 +2,7 @@
 // the form's fields: [Product], and the name field by its label in that
 // template, e.g. [Title], [Project name] or [Feature name].
 
+import { nameContains } from './name-matching';
 import type { TemplateDef } from './templates';
 import type { NewFileData } from './types';
 
@@ -44,10 +45,17 @@ const REPEATED = new RegExp(`\\s*(${SEPARATOR})(?:\\s*${SEPARATOR})+\\s*`, 'g');
 const fillAndTidy = (text: string, template: TemplateDef, data: NewFileData) =>
   interpolate(text, template, data).replace(REPEATED, ' $1 ').replace(EDGES, '');
 
-/** The suggested file name: the template's fileName with placeholders filled and empty parts removed. */
+/**
+ * The suggested file name: the template's fileName with placeholders filled and empty
+ * parts removed. A product the name already contains is left out, so "Contractor
+ * Portal - Hosts" gives "Contractor Portal - Hosts", not "Contractor Portal -
+ * Contractor Portal - Hosts" (see nameContains).
+ */
 export function fileNameFor(template: TemplateDef, data: NewFileData) {
   const pattern = template.fileName || `[${template.thumbnailTitleLabel}]`;
-  return fillAndTidy(pattern, template, data).replace(/\s+/g, ' ') || data.name;
+  const [product] = data.products ?? [];
+  const named = data.products?.length === 1 && nameContains(data.name, product) ? { ...data, products: [] } : data;
+  return fillAndTidy(pattern, template, named).replace(/\s+/g, ' ') || data.name;
 }
 
 const HAS_PLACEHOLDER = /\[[^\]]+\]/;
